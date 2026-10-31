@@ -12,7 +12,7 @@ namespace QueueCache.Developer.Verification;
 public static class FlushOrderScenario
 {
     private const int Block = 4096, MiB = 1 << 20, Offset = 4 * MiB;
-    public const int CheckCount = 14 + PagingOrderScenario.CheckCount, WriteThroughCheckCount = 11;
+    public const int CheckCount = 15 + PagingOrderScenario.CheckCount, WriteThroughCheckCount = 11;
     public const ulong On = 1, WriteThrough = 2;
 
     /// <summary>Mode 1 runs every check, including the per-cache setting. Lab mode 2 (#31) runs the driver
@@ -67,6 +67,39 @@ public static class FlushOrderScenario
     }
 
     // Mode 1 fails the group's lower flush; mode 2 fails its forced write, which leaves the flush count alone.
+    private static CacheOrderedTrims Trims(CacheDiagnostics d) =>
+        d.OrderedTrims ?? throw new InvalidDataException("Missing V29 ordered-TRIM evidence.");
+
+    /// <summary>Plan 216: an ordered TRIM completes when it is queued, before its lower TRIM. Held: the earlier
+    /// group's lower write was still held by the gate when the TRIM returned (before plan 216 the TRIM
+    /// returned only after that group and its lower flush completed).</summary>
+    public static void ValidateQueuedTrim(CacheDiagnostics before, CacheDiagnostics queued, double seconds, bool held)
+    {
+        if (!double.IsFinite(seconds) || seconds < 0 || seconds > 1 ||
+            held && queued.LabGate is not { State: 2, OldLowerDoneSeq: > 0, OldRetireSeq: 0 })
+            throw new InvalidDataException("The TRIM did not complete within a second while its earlier group was still pending.");
+        var a = Trims(before);
+        var b = Trims(queued);
+        var oa = before.FlushOrder ?? throw new InvalidDataException("Missing pre-TRIM ordering evidence.");
+        var ob = queued.FlushOrder ?? throw new InvalidDataException("Missing queued-TRIM ordering evidence.");
+        if (ob.Mode != On || b.Queued != a.Queued + 1 || b.Pending != a.Pending + 1 || b.Sent != a.Sent ||
+            b.Skipped != a.Skipped || b.Dropped != a.Dropped || ob.TrimWaits != oa.TrimWaits + 1 ||
+            ob.DrainingEpoch >= ob.CurrentEpoch)
+            throw new InvalidDataException("The TRIM was not queued behind its earlier group with its lower TRIM unsent.");
+    }
+
+    /// <summary>The explicit flush sent the queued lower TRIM, successfully, and left none queued.</summary>
+    public static void ValidateTrimSent(CacheDiagnostics queued, CacheDiagnostics after)
+    {
+        var a = Trims(queued);
+        var b = Trims(after);
+        var oa = queued.FlushOrder ?? throw new InvalidDataException("Missing queued-TRIM ordering evidence.");
+        var ob = after.FlushOrder ?? throw new InvalidDataException("Missing post-flush ordering evidence.");
+        if (b.Sent != a.Sent + 1 || b.Pending != 0 || b.Failures != a.Failures || b.Dropped != a.Dropped ||
+            b.Sent + b.Dropped + b.Pending != b.Queued || ob.Flushes <= oa.Flushes)
+            throw new InvalidDataException("The explicit flush did not send the queued lower TRIM after its predecessors.");
+    }
+
     public static void ValidateFailed(CacheDiagnostics before, CacheDiagnostics after, WriteCacheState state, bool flushFailed, ulong mode = On)
     {
         var a = before.FlushOrder ?? throw new InvalidDataException("Missing pre-failure ordering evidence.");
@@ -227,6 +260,7 @@ public static class FlushOrderScenario
             // disk mode 2 needs (a plain virtual SCSI disk) refuses it, so mode 2 runs without them (plan 201).
             if (mode == On)
             {
+                checks.Add(await CheckTrimWhileGroupHeld(target, device, path, evidence));
                 Apply(target, device, mode);
                 device.Control(WriteCacheAction.LabTrimMode, value: 3);
                 using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
@@ -234,14 +268,19 @@ public static class FlushOrderScenario
                     file.Write(Offset, Pattern(6));
                     file.Flush();
                     var before = device.GetDiagnostics();
+                    var clock = System.Diagnostics.Stopwatch.StartNew();
                     file.Trim(Offset, Block);
-                    var after = device.GetDiagnostics();
-                    RunStorage.AtomicJson(evidence + ".trim-before.json", before);
-                    RunStorage.AtomicJson(evidence + ".trim-after.json", after);
-                    if (after.FlushOrder!.TrimWaits <= before.FlushOrder!.TrimWaits || !GroupCompleted(before, after, mode))
-                        throw new IOException("TRIM did not exercise waiting for a sealed predecessor and its lower flush.");
+                    var seconds = clock.Elapsed.TotalSeconds;
+                    var queued = device.GetDiagnostics();
+                    // Deferred drain: the sealed predecessor is still in RAM, so the lower TRIM must still be queued.
                     file.Write(Offset, Pattern(7));
                     device.Control(WriteCacheAction.Flush);
+                    var after = device.GetDiagnostics();
+                    RunStorage.AtomicJson(evidence + ".trim-before.json", before);
+                    RunStorage.AtomicJson(evidence + ".trim-queued.json", new { Diagnostics = queued, Seconds = seconds });
+                    RunStorage.AtomicJson(evidence + ".trim-after.json", after);
+                    ValidateQueuedTrim(before, queued, seconds, held: false);
+                    ValidateTrimSent(queued, after);
                 }
                 Reset(device);
                 using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
@@ -250,7 +289,7 @@ public static class FlushOrderScenario
                     AssertRead(file, Offset + Block, Pattern(3));
                 }
                 checks.Add(new("flush-order/trim-predecessor-and-rewrite", "PASS",
-                    "TRIM waited for the sealed predecessor and its lower flush; a later rewrite and its untouched neighbor matched after release. Trimmed bytes were not assumed to be zero."));
+                    "TRIM completed while its sealed predecessor was still in RAM, with its lower TRIM queued; the explicit flush sent it after the predecessor. A later rewrite and its untouched neighbor matched after release. Trimmed bytes were not assumed to be zero."));
                 Apply(target, device, mode);
                 device.Control(WriteCacheAction.LabTrimMode, value: 0);
                 using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
@@ -497,6 +536,61 @@ public static class FlushOrderScenario
             "Apply selected and verified write ordering; pause/resume kept it; Strict with ordering was refused unchanged; a configuration without a choice kept it; off cleared it; removing the cache cleared it.");
     }
 
+    // Plan 216 (R8: a TRIM queued behind a 190,000-group backlog held C: for 262 s). Eager drain starts the
+    // sealed group's lower write at once and the gate holds its completion; a TRIM of another block must
+    // complete meanwhile, queued, and reach the disk only after that group.
+    private static async Task<CheckResult> CheckTrimWhileGroupHeld(DiskTarget target, CacheDevice device, string path, string evidence)
+    {
+        const long trimOffset = Offset + 2 * Block;
+        Reset(device);
+        device.Control(WriteCacheAction.FlushOrder, value: On);
+        ConfigurationManager.Apply(target, new CacheConfiguration(64, CachePreset.Fast)
+        {
+            Options = new CacheOptions(Drain: DrainAlgorithm.Eager, BatchKiB: 4, Parallelism: 2, RetainWrites: false)
+        }, true);
+        device.Control(WriteCacheAction.LabTrimMode, value: 3);
+        double seconds;
+        using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
+        {
+            var diskOffset = PagingCoherenceScenarios.DiskOffsetOf(path, Offset, target.Root);
+            device.Control(WriteCacheAction.LabGate, (ulong)diskOffset, 4000UL << 32 | Block);
+            try
+            {
+                file.Write(Offset, Pattern(16));
+                file.Flush(); // Seals the held group from volatile RAM.
+                var waiting = System.Diagnostics.Stopwatch.StartNew();
+                while (device.GetDiagnostics().LabGate is not { State: 2, OldLowerDoneSeq: > 0 })
+                {
+                    if (waiting.Elapsed.TotalSeconds > 3)
+                        throw new IOException("The sealed group's lower write did not reach the gate hold.");
+                    await Task.Delay(10);
+                }
+                var before = device.GetDiagnostics();
+                var clock = System.Diagnostics.Stopwatch.StartNew();
+                file.Trim(trimOffset, Block);
+                seconds = clock.Elapsed.TotalSeconds;
+                var queued = device.GetDiagnostics();
+                RunStorage.AtomicJson(evidence + ".trim-held-before.json", before);
+                RunStorage.AtomicJson(evidence + ".trim-held-queued.json", new { Diagnostics = queued, Seconds = seconds });
+                ValidateQueuedTrim(before, queued, seconds, held: true);
+                file.Write(trimOffset, Pattern(17));
+                device.Control(WriteCacheAction.Flush); // Waits for the hold, then the group, the TRIM and the rewrite.
+                var after = device.GetDiagnostics();
+                RunStorage.AtomicJson(evidence + ".trim-held-after.json", after);
+                ValidateTrimSent(queued, after);
+            }
+            finally { device.Control(WriteCacheAction.LabGate, value: 0); }
+        }
+        Reset(device);
+        using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
+        {
+            AssertRead(file, Offset, Pattern(16));
+            AssertRead(file, trimOffset, Pattern(17));
+            AssertRead(file, Offset + Block, Pattern(3));
+        }
+        return new("flush-order/trim-completes-while-group-held", "PASS",
+            $"With an earlier group's lower write held, a TRIM of another block completed in {seconds:F3}s with its lower TRIM queued and unsent; the explicit flush then sent it. The held write, the trimmed block's rewrite and an untouched neighbor matched after release.");
+    }
     private static void Reset(CacheDevice device)
     {
         device.Control(WriteCacheAction.Disable);

@@ -65,7 +65,7 @@ internal static class VerificationCommands
                                  Separate from full; no DiskSpd needed.
               paging-read-progress  Mapped page-in behind queued application flush during held explicit flush;
                                  --budget-mib 256, non-OS NTFS lab. Native/service witnesses and byte oracles.
-              flush-order        Fourteen dependency/version/fault/capacity/direct-fallback/setting checks for write ordering, on lab NTFS.
+              flush-order        Fifteen dependency/version/fault/capacity/TRIM/direct-fallback/setting checks for write ordering, on lab NTFS.
                                  Injects deliberate faults, restores mode; no power-cut claim or DiskSpd.
               flush-order-cost   Ordering off and on, alternating order; full telemetry/byte oracle.
                                  --budget-mib 2048 --repeats 3 (about 15 min), Verifier off, 15-minute warm boot; no DiskSpd.

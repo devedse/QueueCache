@@ -187,6 +187,12 @@ struct QC_DIAGNOSTICS
     ULONGLONG SafeRangeOverlapFound, SafeRangeTableFull, SafeRangeClears, SafeRangeCount, SafeRangeLastClearReason;
     ULONGLONG PagingFileWriteRequests, PagingWriteNoFileObject, PagingWriteHighIrql;
     ULONGLONG SafeMutationSequence; // Seed token: rejects maps captured across other writes.
+    // V29 (plan 216): ordered Fast TRIMs completed when queued, their lower TRIMs later sent by the
+    // drain after every earlier group, the sent ones that failed (the caller already succeeded), queued
+    // ones never sent (no request memory at their turn), TRIMs completed without any lower TRIM because
+    // no fence slot or memory was free, and those queued now (including one being sent).
+    ULONGLONG OrderedTrimsQueued, OrderedTrimsSent, OrderedTrimFailures, OrderedTrimsDropped;
+    ULONGLONG OrderedTrimsSkipped, OrderedTrimsPending;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -215,7 +221,9 @@ static constexpr ULONG QcDiagnosticsV24Size = 1184;
 static constexpr ULONG QcDiagnosticsV25Size = 1208;
 static constexpr ULONG QcDiagnosticsV26Size = 1280;
 static constexpr ULONG QcDiagnosticsV27Size = 1312;
-static_assert(sizeof(QC_DIAGNOSTICS) == 1416);
+static constexpr ULONG QcDiagnosticsV28Size = 1416;
+static_assert(sizeof(QC_DIAGNOSTICS) == 1464);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, OrderedTrimsQueued) == QcDiagnosticsV28Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingOrderBypasses) == QcDiagnosticsV27Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, EpochWriteThroughGroups) == QcDiagnosticsV26Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, FlushOrderMode) == QcDiagnosticsV25Size);
@@ -375,6 +383,11 @@ struct QC_TRIM_FENCE
     ULONG Count;
     LONGLONG Low, High;
     ULONGLONG Epoch; // Ordered Fast: this lower TRIM belongs between sealed write groups.
+    // Ordered Fast (plan 216): the caller's TRIM completed when it was queued. Drainer zero sends
+    // this lower TRIM with the caller's Flags once every earlier group is on the disk; Sending
+    // while that request is outstanding.
+    ULONG Flags;
+    BOOLEAN Queued, Sending;
 }; // Toggle optional detailed timing; never resets counters.
 enum : ULONG
 {
@@ -557,8 +570,11 @@ struct QC_CACHE
     volatile LONG TrimMode; // QcLabTrimMode (QcDefaultTrimMode).
     // Mutex: ranges of asynchronous lower TRIMs not yet completed. Drainers never
     // select a version inside one, and forwarded writes wait for an overlapping one.
+    // A queued ordered TRIM is never overtaken: every forwarding path except a safe
+    // page-file range takes a barrier first, and a TRIM clears the safe ranges it covers.
     QC_TRIM_FENCE TrimFences[QcTrimFenceSlots];
     ULONG TrimFenceCount;
+    ULONG QueuedTrims; // Mutex: fences whose caller already completed (Queued), including one being sent.
     volatile LONG64 TrimLookups, TrimAsync, TrimAsyncFallbacks;
     volatile LONG64 CallerPathReads, CallerPathWrites, CallerPathDeclined, CopyOffloadReads, CopyOffloadWrites;
     volatile LONG64 PagingReadsRepeatedPages, ReadFillsSkippedRepeatedPages;

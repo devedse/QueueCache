@@ -686,7 +686,7 @@ BinaryPrimitives.WriteUInt32LittleEndian(strictBytes.AsSpan(4), CacheDiagnostics
 foreach (var (offset, value) in new[] { (0, 300UL), (8, 4000UL), (16, 17UL) })
     BinaryPrimitives.WriteUInt64LittleEndian(strictBytes.AsSpan(CacheDiagnostics.DrainPriorityWireSize + offset), value);
 Check(CacheDiagnostics.Decode(strictBytes).StrictBacklog == new CacheStrictBacklog(300, 4000, 17) &&
-    CacheDiagnostics.Decode(drainPriorityBytes).StrictBacklog is null && CacheDiagnostics.CurrentWireSize == 1416,
+    CacheDiagnostics.Decode(drainPriorityBytes).StrictBacklog is null && CacheDiagnostics.CurrentWireSize == 1464,
     "V25 diagnostics report Strict's backlog pieces, limit and waits (#16); V24 reports none");
 BinaryPrimitives.WriteUInt64LittleEndian(strictBytes.AsSpan(CacheDiagnostics.DrainPriorityWireSize + 8), 100);
 Reject(() => CacheDiagnostics.Decode(strictBytes), "Strict backlog limit below its 256-piece floor rejected");

@@ -36,7 +36,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 215, "plan 215 requires a real page-in behind a queued flush during held explicit writeout");
+        Check(VerificationPlan.Version == 216, "plan 216 requires ordered TRIMs to complete while an earlier group is held");
         var progressOptions = new VerificationOptions("W:", PagingReadProgressScenario.Suite, BudgetMiB: 256);
         VerificationPlan.Validate(progressOptions);
         Check(VerificationPlan.Integrity(progressOptions).Single().Id == "paging-read-progress-v215" &&
@@ -135,6 +135,31 @@ internal static class DiagnosticContracts
         BinaryPrimitives.WriteUInt64LittleEndian(pagingWire.AsSpan(CacheDiagnostics.WriteThroughGroupsWireSize + 7 * 8), 256);
         BinaryPrimitives.WriteUInt64LittleEndian(pagingWire.AsSpan(CacheDiagnostics.WriteThroughGroupsWireSize + 8 * 8), 11);
         Reject(() => CacheDiagnostics.Decode(pagingWire));
+        // V29 (plan 216) appends the ordered-TRIM counters; V28 evidence has none rather than zeros.
+        var trimWire = new byte[CacheDiagnostics.OrderedTrimWireSize];
+        pagingWire.AsSpan(0, CacheDiagnostics.PagingOrderWireSize).CopyTo(trimWire);
+        BinaryPrimitives.WriteUInt64LittleEndian(trimWire.AsSpan(CacheDiagnostics.WriteThroughGroupsWireSize + 8 * 8), 1);
+        BinaryPrimitives.WriteUInt32LittleEndian(trimWire, 29);
+        BinaryPrimitives.WriteUInt32LittleEndian(trimWire.AsSpan(4), (uint)trimWire.Length);
+        void Trims(params ulong[] values)
+        {
+            for (var i = 0; i < values.Length; ++i)
+                BinaryPrimitives.WriteUInt64LittleEndian(trimWire.AsSpan(CacheDiagnostics.PagingOrderWireSize + 8 * i), values[i]);
+        }
+        Trims(9, 6, 1, 1, 4, 2);
+        Check(CacheDiagnostics.Decode(trimWire).OrderedTrims == new CacheOrderedTrims(9, 6, 1, 1, 4, 2) &&
+            CacheDiagnostics.CurrentWireSize == CacheDiagnostics.OrderedTrimWireSize,
+            "V29 ordered-TRIM field offsets");
+        var trimOlder = trimWire[..CacheDiagnostics.PagingOrderWireSize];
+        BinaryPrimitives.WriteUInt32LittleEndian(trimOlder, 28);
+        BinaryPrimitives.WriteUInt32LittleEndian(trimOlder.AsSpan(4), (uint)trimOlder.Length);
+        Check(CacheDiagnostics.Decode(trimOlder).OrderedTrims is null, "V28 has no ordered-TRIM counters");
+        foreach (var (queued, sent, failures, dropped, pending) in new (ulong, ulong, ulong, ulong, ulong)[]
+            { (9, 6, 7, 1, 2), (9, 8, 1, 2, 0), (9, 6, 1, 1, 10) })
+        {
+            Trims(queued, sent, failures, dropped, 0, pending);
+            Reject(() => CacheDiagnostics.Decode(trimWire));
+        }
         var seedWire = SpecialRangeMap.Encode([new DiskRange(4096, 8192)], SpecialRangeKind.SafePaging);
         Check(BinaryPrimitives.ReadUInt32LittleEndian(seedWire.AsSpan(12)) == 3 && seedWire.Length == 40,
             "Safe paging seeds use the separate range set without altering older flags");
@@ -390,11 +415,11 @@ internal static class DiagnosticContracts
             drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
         Reject(() => TelemetryCoverage.Validate(completeDrain.Where((_, i) => i is < 60 or > 63).ToArray(),
             drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
-        Check(VerificationPlan.Integrity(new("Q:", "flush-order")).SequenceEqual([new IntegrityCase("flush-order-v209", "flush-order")]) &&
+        Check(VerificationPlan.Integrity(new("Q:", "flush-order")).SequenceEqual([new IntegrityCase("flush-order-v216", "flush-order")]) &&
             VerificationPlan.InjectsLabFaults("flush-order"), "ordering suite runs only its owned checks and records deliberate fault recovery");
         var orderCampaign = VerificationCampaignPlan.Create(new(new("Q:", "quick", Repeats: 1), "experiment", "W:", FocusSuite: "flush-order", PauseBackingCache: true));
         Check(orderCampaign.Count == 1 && orderCampaign[0].Role == CampaignTargetRole.NtfsLab &&
-            orderCampaign[0].ExpectedCases.SequenceEqual(["flush-order-v209"]), "ordering experiment pauses the backing cache and targets only the disposable lab role");
+            orderCampaign[0].ExpectedCases.SequenceEqual(["flush-order-v216"]), "ordering experiment pauses the backing cache and targets only the disposable lab role");
         var orderRecovery = new RecoverySnapshot(1, new DiskTarget('Q', 99990, 8L << 30, "fixture"),
             new(0, 0, 8UL << 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), false, "[]", DateTimeOffset.UnixEpoch, "fixture", FlushOrderMode: 0);
         Check(VerificationWorker.RestorationMismatches(orderRecovery, orderRecovery.State, orderRecovery.State, "[]", 0,
@@ -408,6 +433,28 @@ internal static class DiagnosticContracts
         };
         var orderAfter = orderBefore with { FlushOrder = new(1, 2, 1, 1, 0, 1, 0, 0, 0) };
         FlushOrderScenario.ValidateRamAdmission(orderBefore, orderAfter);
+        // Plan 216: the TRIM returns queued while the earlier group's write is still held.
+        var trimBefore = orderBefore with { FlushOrder = new(1, 2, 1, 1, 0, 0, 0, 0, 1), OrderedTrims = new(3, 3, 0, 0, 0, 0),
+            LabGate = new(2, 1, 1, 2, 0, 0, 0, 0) };
+        var trimQueued = trimBefore with { FlushOrder = new(1, 3, 1, 1, 0, 0, 1, 0, 1), OrderedTrims = new(4, 3, 0, 0, 0, 1) };
+        var trimSent = trimQueued with { FlushOrder = new(1, 4, 4, 2, 3, 0, 1, 0, 3), OrderedTrims = new(4, 4, 0, 0, 0, 0),
+            LabGate = new(3, 1, 1, 2, 3, 0, 0, 0) };
+        FlushOrderScenario.ValidateQueuedTrim(trimBefore, trimQueued, .002, held: true);
+        FlushOrderScenario.ValidateQueuedTrim(trimBefore, trimQueued with { LabGate = null }, .002, held: false);
+        FlushOrderScenario.ValidateTrimSent(trimQueued, trimSent);
+        // The 0.4.906.1 shape: the TRIM returned only after the hold released and its lower TRIM was done.
+        Reject(() => FlushOrderScenario.ValidateQueuedTrim(trimBefore, trimSent, 4.1, held: true));
+        Reject(() => FlushOrderScenario.ValidateQueuedTrim(trimBefore, trimQueued with { LabGate = trimSent.LabGate }, .002, held: true));
+        foreach (var seconds in new[] { double.NaN, -1, 1.01 })
+            Reject(() => FlushOrderScenario.ValidateQueuedTrim(trimBefore, trimQueued, seconds, held: false));
+        foreach (var wrong in new[] { trimQueued with { OrderedTrims = null }, trimQueued with { OrderedTrims = new(4, 4, 0, 0, 0, 0) },
+            trimQueued with { OrderedTrims = new(3, 3, 0, 0, 1, 0) }, trimQueued with { OrderedTrims = new(4, 3, 0, 0, 1, 1) },
+            trimQueued with { FlushOrder = trimQueued.FlushOrder! with { TrimWaits = 0 } },
+            trimQueued with { FlushOrder = trimQueued.FlushOrder! with { DrainingEpoch = 3 } } })
+            Reject(() => FlushOrderScenario.ValidateQueuedTrim(trimBefore, wrong, .002, held: true));
+        foreach (var wrong in new[] { trimSent with { OrderedTrims = new(4, 4, 1, 0, 0, 0) }, trimSent with { OrderedTrims = new(4, 3, 0, 1, 0, 0) },
+            trimSent with { OrderedTrims = new(5, 4, 0, 0, 0, 1) }, trimSent with { FlushOrder = trimQueued.FlushOrder } })
+            Reject(() => FlushOrderScenario.ValidateTrimSent(trimQueued, wrong));
         Reject(() => FlushOrderScenario.ValidateRamAdmission(orderBefore, orderAfter with { FlushOrder = null }));
         Reject(() => FlushOrderScenario.ValidateRamAdmission(orderBefore, orderAfter with
             { Attribution = orderAfter.Attribution! with { LowerFlushAttempts = 1 } }));

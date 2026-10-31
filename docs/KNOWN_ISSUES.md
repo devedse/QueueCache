@@ -19,7 +19,7 @@ still to do. Open items link to their details.
 | Issue | Fixed | Build or status |
 |---|:-:|---|
 | [Fast mode without write ordering: a crash can damage the file system](#fast-mode-without-write-ordering-can-damage-the-file-system-in-a-crash) | ❌ | By design: write ordering stays off by default because programs that flush very often slow down. Qualified for NTFS data drives; C: qualification is tracked below. See the fixed #13 row |
-| [Write ordering on C:](https://github.com/devedse/QueueCache/issues/32) | ❌ | Qualification in progress. Bounded live correctness passed on 0.4.897.1 and 0.4.900.1; cost and C: reset qualification remain pending. Earlier coverage failures are retained. The app offers it only with a matching V28 driver. |
+| [Write ordering on C:](https://github.com/devedse/QueueCache/issues/32) | ❌ | Qualification in progress. Bounded live correctness passed on 0.4.897.1, 0.4.900.1 and 0.4.906.1. The cost comparison found that a TRIM waiting behind a large save-point backlog held C: for 262 s; plan 216 completes it when queued, pending validation. Cost and C: reset qualification remain pending. Earlier coverage failures are retained. The app offers it only with a matching V28 driver. |
 | [High-watermark pressure check stopped the plan-189 release campaign](#high-watermark-pressure-check-stopped-the-plan-189-release-campaign) | ❌ | Not reproduced, [#30](https://github.com/devedse/QueueCache/issues/30): two standalone runs and the complete plan-192 release campaign (11/11 phases, 106/106 cases, restored) passed it with exact counters; the original cause is unproven |
 | [The driver and installer are test-signed](#the-driver-is-test-signed) | ❌ | Production signing not done |
 | [Raw disk reads and writes bypass the cache](#raw-disk-reads-and-writes-bypass-the-cache-by-design) | ❌ | By design |
@@ -92,7 +92,8 @@ the same way also damaged NTFS when cut during its write-out.
 [#13](https://github.com/devedse/QueueCache/issues/13) on 2026-10-28 for NTFS data volumes. With it on, writes after a filesystem
 flush or a write-through write stay in RAM until
 everything before that point and a real lower flush have completed; old dirty
-versions are kept across those boundaries, and TRIM is ordered with them. Since
+versions are kept across those boundaries, and TRIM is ordered with them (since
+plan 216 a TRIM completes once queued instead of holding the file system). Since
 plan 196 there is one mode (the former lab mode 3); the original mode 1, which also
 sealed before each write-through, and mode 2, which woke every drain thread for each
 write, were removed. It is an advanced per-cache setting, off by default, in the
@@ -200,6 +201,28 @@ queued flushes in a healthy enabled Fast drain; it retains older-write overlap,
 control/TRIM and Strict/lifecycle fences. Native validation and a fresh complete
 cost window are required before calling the original pause resolved. Cost, C:
 cuts and release qualification remain pending; no reset or repair has been used.
+
+On 0.4.906.1 under Driver Verifier that regression passed (the page-in completed
+in 0.0009 s with both flushes held), and all 22 ordering checks, the bounded C:
+pressure check (128 exact files, heartbeat maximum 0.239 s, telemetry 0.294 s) and
+ordered paging recognition passed and restored. The next cost window (Verifier off)
+first stopped in its off arm on a fixture fault: the app-launch fixture misread a
+job's process list while Edge exited, and now retries that transient state for up
+to two seconds. In the fresh repeat the first off arm passed (maximum telemetry /
+heartbeat gaps 0.384 / 0.388 s), but the ordering-on arm's heartbeat again lost
+262.529 s after the flush-heavy step, as on 0.4.905.1 (261.738 s): the read fix
+alone did not remove the pause. Its telemetry shows the cause. The step left about
+190,000 save points (1,958 MiB) in RAM, and with ordering on a TRIM completed only
+after every earlier save point and its lower flush were on the disk. NTFS waited
+on one TRIM for more than five minutes while the drain wrote about 640 save points
+per second. No write reached the cache although free space rose from 13 to
+1,387 MiB, and every page-in that reached the driver completed. Plan 216 completes
+an ordered TRIM when it is queued, like a write; the drain sends its lower TRIM
+after every earlier group and that group's flush, so crash ordering is unchanged
+([TRIM](#trim-no-longer-waits-for-unrelated-drain-writes)). The final off arm was
+not run; original settings were restored and 2,809 exported records verified.
+Native validation and a fresh complete cost window are required. Cost, C: cuts
+and release qualification remain pending.
 
 
 - **Checks:** 14/14 targeted live-driver checks passed under Driver Verifier on
@@ -604,6 +627,23 @@ contrary to the RAM-first goal ([evidence](PERFORMANCE.md#matched-158)).
 - **0.4.776.1:** the caller-thread path stays on while a slow lower TRIM is
   outstanding; before, the lab VHDX's TRIMs switched it off
   ([results](PERFORMANCE.md#final-164)).
+- **Plan 216, write ordering on:** a TRIM no longer waits for earlier save points.
+  Until then it completed only after every earlier group and its lower flush, which
+  held NTFS, and so all of C:, for 262 s behind a 190,000-group backlog
+  ([cost window](PERFORMANCE.md#c-ordering-cost-observer-32)). It now completes once
+  queued; drainer zero sends the lower TRIM, with the caller's flags, after every
+  earlier group is written and flushed, and then flushes the TRIM's own group. While
+  it waits, reads of its sectors return their earlier contents, so a disk's
+  read-zero-after-TRIM property does not hold in that window (NTFS does not read
+  freed clusters). If all 16 fence slots are queued or memory is short, the TRIM
+  completes with no lower TRIM, which is crash-safe; Windows' scheduled retrim
+  returns the space. A lower TRIM that fails later is counted, not reported, and
+  does not fault the cache. Diagnostics V29 count queued, sent, failed, dropped,
+  skipped and pending TRIMs. A TRIM on a paused cache still completes after its lower
+  TRIM; a paused cache has no earlier writes left to wait for.
+  `flush-order/trim-completes-while-group-held` requires the TRIM to return within
+  one second while an earlier group's lower write is held; before plan 216 it
+  returned only after that hold.
 
 Under Driver Verifier, `trim-cache` passed 12/12 and the focused campaign 98/98
 with mode 3 on. **Verification gap:** the fence's holding path and the forwarded-write wait have
@@ -611,7 +651,8 @@ not been reached. NTFS keeps a file's writes behind that file's outstanding
 file-level TRIM, so a rewrite always arrived after the TRIM. Reaching the fence
 needs a writer outside that ordering, such as raw volume writes, which the
 verifier never performs. `trim-cache/async-eager-ordering` reports which path
-occurred.
+occurred. With write ordering on, the group frontier itself keeps newer versions
+behind a queued TRIM; its fence is a second guard there.
 [Evidence](PERFORMANCE.md#prio-162).
 
 The test VM's disk now accepts TRIM. On 2026-10-18 the hypervisor counted about

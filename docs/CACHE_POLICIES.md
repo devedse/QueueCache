@@ -347,7 +347,15 @@ version of a later group, and drainers wake only for work they may start: a writ
 into the oldest group, the seal of that group with none of its writes in flight,
 or the lower flush that moves on to the next group. TRIM is also an ordered effect:
 sealed dirty history drains before the lower discard, and newer writes cannot drain
-ahead of it. Empty boundaries coalesce. A failed ordering flush faults the cache and
+ahead of it. Since plan 216 the TRIM itself completes once it is queued, like a write:
+drainer zero later sends the lower TRIM, with the caller's flags, after every earlier
+group is written and flushed, then flushes the TRIM's group. Completing only after that
+had held NTFS behind the whole backlog (262 s on C: after a flush-heavy burst). Until
+the lower TRIM is sent, reads of its sectors return their earlier contents, so a disk's
+read-zero-after-TRIM property does not hold in that window. When all 16 TRIM slots are
+queued or memory is short, the TRIM completes with no lower TRIM; that is crash-safe,
+and Windows' scheduled retrim returns the space. A lower TRIM that fails later is
+counted and does not fault the cache. Empty boundaries coalesce. A failed ordering flush faults the cache and
 retains its boundary for explicit Retry.
 
 Plan 196 removed two earlier variants. The original mode 1 also sealed before every
@@ -359,7 +367,9 @@ Value 1 now selects the former lab mode 3.
 Supported fitting writes still enter RAM without lower I/O for admission. Retained
 versions consume the existing budget and can cause capacity backpressure. An
 unsupported/unmappable direct write, an oversized write, or a synchronous TRIM
-fallback reconciles earlier history and flushes its lower effect before returning.
+fallback (lab TRIM mode) reconciles earlier history and flushes its lower effect before
+returning. A TRIM on a paused cache still completes after its lower TRIM; a paused
+cache has no earlier writes left to wait for.
 These conservative fallbacks can wait for unrelated dirty data. Strict and explicit
 QueueCache Flush/Pause/Remove retain their durable boundary. This does not make Fast
 application flushes durable or promise that recently acknowledged data survives a
@@ -374,7 +384,9 @@ while their time into the cache matched ordering off
 
 Diagnostics V26 appends the mode, current/draining group, seal and successful/failed
 ordering-flush counts, retained-version and TRIM-wait counts, and the highest group
-selected for a drain in this allocation. A lower group flush must be supported and
+selected for a drain in this allocation. Diagnostics V29 (plan 216) appends queued
+TRIMs, their lower TRIMs sent and failed, queued ones dropped unsent, TRIMs completed
+without a lower TRIM, and those queued now. A lower group flush must be supported and
 honoured by the complete storage stack. See [Microsoft's write-cache contract](https://learn.microsoft.com/en-us/windows-hardware/drivers/storage/querying-for-the-write-cache-property).
 The lower-I/O path continues to use ordinary writes and explicit group flushes.
 A read-only October 25 capability query reported write-through support on the VM's

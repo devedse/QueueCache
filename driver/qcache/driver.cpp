@@ -1185,6 +1185,7 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             QC_DIAGNOSTICS diagnostics;
             QcCacheDiagnostics(&ext->Cache, &diagnostics);
             auto returned = outputLength >= sizeof(diagnostics) ? sizeof(diagnostics) :
+                outputLength >= QcDiagnosticsV28Size ? QcDiagnosticsV28Size :
                 outputLength >= QcDiagnosticsV27Size ? QcDiagnosticsV27Size :
                 outputLength >= QcDiagnosticsV26Size ? QcDiagnosticsV26Size :
                 outputLength >= QcDiagnosticsV25Size ? QcDiagnosticsV25Size :
@@ -1223,7 +1224,8 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
                 returned == QcDiagnosticsV20Size ? 20 : returned == QcDiagnosticsV21Size ? 21 :
                 returned == QcDiagnosticsV22Size ? 22 : returned == QcDiagnosticsV23Size ? 23 :
                 returned == QcDiagnosticsV24Size ? 24 : returned == QcDiagnosticsV25Size ? 25 :
-                returned == QcDiagnosticsV26Size ? 26 : returned == QcDiagnosticsV27Size ? 27 : 28;
+                returned == QcDiagnosticsV26Size ? 26 : returned == QcDiagnosticsV27Size ? 27 :
+                returned == QcDiagnosticsV28Size ? 28 : 29;
             diagnostics.Size = static_cast<ULONG>(returned);
             RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &diagnostics, returned);
             IoReleaseRemoveLock(&ext->RemoveLock, irp);

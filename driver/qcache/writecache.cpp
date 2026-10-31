@@ -45,6 +45,8 @@ void QcCacheForegroundReadDone(QC_CACHE* c)
 static void PagingReader(PVOID context);
 struct QC_PAGING_READ;
 static NTSTATUS RunAsyncTrim(QC_CACHE* c, const QC_PAGING_READ* entry);
+static NTSTATUS SendQueuedTrim(QC_CACHE* c, const DEVICE_DATA_SET_RANGE* ranges, ULONG count, ULONG flags, bool* sent);
+static void FinishAsyncTrim(QC_CACHE* c, ULONG fence, NTSTATUS status, bool sent = true);
 static bool TrimsOverlap(QC_CACHE* c, LONGLONG first, LONGLONG end);
 static bool RangesOverlap(const QC_SPECIAL_RANGE* ranges, ULONG count, LONGLONG first, LONGLONG end);
 // Lab gate evidence: store the next per-disk sequence once. Returns true if set.
@@ -160,6 +162,7 @@ static void Publish(QC_CACHE* c)
     c->Diagnostics.WriteEpoch = c->WriteEpoch;
     c->Diagnostics.DrainEpoch = c->DrainEpoch;
     c->Diagnostics.SafeRangeCount = c->SafePaging.Count;
+    c->Diagnostics.OrderedTrimsPending = c->QueuedTrims;
     c->DiagnosticsSnapshot = c->Diagnostics;
     c->Performance.Version = 5;
     c->Performance.Size = sizeof(QC_PERFORMANCE);
@@ -1036,6 +1039,23 @@ static void AdvanceFrontier(QC_CACHE* c)
     c->DrainEpoch = QcNextFrontier(c->DrainEpoch, next, c->WriteEpoch);
     c->EpochNeedsFlush = FALSE;
 }
+// Mutex held. True when the fence's sorted, merged, disjoint ranges cover part of [first, end).
+static bool FenceOverlaps(const QC_TRIM_FENCE& fence, LONGLONG first, LONGLONG end)
+{
+    if (!fence.Ranges || first >= fence.High || end <= fence.Low)
+        return false;
+    // First range ending after first.
+    ULONG low = 0, high = fence.Count;
+    while (low < high)
+    {
+        const auto mid = low + (high - low) / 2;
+        if (fence.Ranges[mid].StartingOffset + static_cast<LONGLONG>(fence.Ranges[mid].LengthInBytes) <= first)
+            low = mid + 1;
+        else
+            high = mid;
+    }
+    return low < fence.Count && fence.Ranges[low].StartingOffset < end;
+}
 // Mutex held. True when block lies inside a TRIM whose lower request is still
 // outstanding (QcTrimAsync): written first, that TRIM could then erase the newer data.
 static bool TrimFenced(QC_CACHE* c, LONGLONG block, ULONGLONG epoch = MAXULONGLONG)
@@ -1043,22 +1063,18 @@ static bool TrimFenced(QC_CACHE* c, LONGLONG block, ULONGLONG epoch = MAXULONGLO
     if (!c->TrimFenceCount)
         return false;
     for (const auto& fence : c->TrimFences)
-    {
-        if (!fence.Ranges || (FlushOrdering(c) && epoch < fence.Epoch) || block >= fence.High || block + Chunk <= fence.Low)
-            continue;
-        // First range ending after block (sorted, merged, disjoint).
-        ULONG low = 0, high = fence.Count;
-        while (low < high)
-        {
-            const auto mid = low + (high - low) / 2;
-            if (fence.Ranges[mid].StartingOffset + static_cast<LONGLONG>(fence.Ranges[mid].LengthInBytes) <= block)
-                low = mid + 1;
-            else
-                high = mid;
-        }
-        if (low < fence.Count && fence.Ranges[low].StartingOffset < block + Chunk)
+        if (!(FlushOrdering(c) && epoch < fence.Epoch) && FenceOverlaps(fence, block, block + Chunk))
             return true;
-    }
+    return false;
+}
+// Mutex held. True when a queued ordered TRIM, not yet completed below, covers part of [first, end).
+static bool QueuedTrimOverlaps(QC_CACHE* c, LONGLONG first, LONGLONG end)
+{
+    if (!c->QueuedTrims)
+        return false;
+    for (const auto& fence : c->TrimFences)
+        if (fence.Queued && FenceOverlaps(fence, first, end))
+            return true;
     return false;
 }
 // Mutex held. Lower writes the drainers have outstanding right now.
@@ -1230,6 +1246,30 @@ static void Drainer(PVOID context)
             LARGE_INTEGER interval;
             interval.QuadPart = -1000000; // Parallelism changes only at a disabled boundary.
             KeWaitForSingleObject(&c->Stopping, Executive, KernelMode, FALSE, &interval);
+            continue;
+        }
+        // Ordered Fast (plan 216): a queued TRIM is the lower effect of its own group. Once every
+        // earlier group and its flush are on the disk, drainer zero sends it here, in order; that
+        // group's flush follows below. Its caller completed when it was queued.
+        ULONG queued = QcTrimFenceSlots;
+        if (worker->Number == 0 && c->QueuedTrims && FlushOrdering(c) && !c->TrimPaused && !c->EpochFlushInFlight &&
+            !c->State.InFlightBytes && NT_SUCCESS(c->State.LastError) && !c->Gone)
+            for (ULONG i = 0; i < QcTrimFenceSlots && queued == QcTrimFenceSlots; ++i)
+                if (c->TrimFences[i].Queued && !c->TrimFences[i].Sending && c->TrimFences[i].Epoch <= c->DrainEpoch)
+                    queued = i;
+        if (queued != QcTrimFenceSlots)
+        {
+            // Sending keeps the entry and its immutable ranges alive without the lock.
+            auto& fence = c->TrimFences[queued];
+            fence.Sending = TRUE;
+            const auto ranges = fence.Ranges;
+            const auto count = fence.Count;
+            const auto flags = fence.Flags;
+            Publish(c);
+            ReleaseCache(c);
+            bool sent;
+            const auto status = SendQueuedTrim(c, ranges, count, flags, &sent);
+            FinishAsyncTrim(c, queued, status, sent);
             continue;
         }
         // Only drainer zero advances a sealed group. No later group can submit
@@ -1836,14 +1876,16 @@ void QcCacheDestroy(QC_CACHE* c)
                    "QueueCache removed with %llu dirty bytes; status 0x%08X\n",
                    c->State.DirtyBytes,
                    c->State.LastError);
-    // Offload threads finished every asynchronous TRIM before exiting; release defensively.
+    // Offload threads finished every asynchronous TRIM before exiting. A queued ordered TRIM that
+    // never reached its turn is dropped with the volatile data before it; sending none is safe.
     for (auto& fence : c->TrimFences)
         if (fence.Ranges)
         {
             ExFreePoolWithTag(fence.Ranges, Tag);
             fence.Ranges = nullptr;
+            fence.Queued = fence.Sending = FALSE;
         }
-    c->TrimFenceCount = 0;
+    c->TrimFenceCount = c->QueuedTrims = 0;
     FreeSlots(c); // Surprise removal cannot promise volatile data survival.
     if (c->LowerCallItem)
     {
@@ -2085,9 +2127,10 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
         break;
     case QcFlushPolicy:
         // Explicit operator choice, only at a clean disabled boundary. Never persists across boot.
+        // Queued ordered TRIMs are sent only while ordering applies, so they must be finished first.
         if (command.Value > 1 || command.BudgetBytes)
             status = STATUS_INVALID_PARAMETER;
-        else if (c->Enabled || c->Count || !NT_SUCCESS(c->State.LastError))
+        else if (c->Enabled || c->Count || c->TrimFenceCount || !NT_SUCCESS(c->State.LastError))
             status = STATUS_DEVICE_BUSY;
         else
         {
@@ -2329,10 +2372,11 @@ static NTSTATUS DirectWrite(QC_CACHE* c, PIRP irp, LONGLONG first, ULONG length)
         pagingFile = pagingFile && Map(irp) != nullptr;
     }
     bool safe = ordered && pagingFile && QcSafePagingContains(c->SafePaging, first, end);
-    if (safe && PendingRange(c, first, end))
+    if (safe && (PendingRange(c, first, end) || QueuedTrimOverlaps(c, first, end)))
     {
-        // Never silently wait on an impossible safe overlap. Fail closed and
-        // retain the witness even in Release builds.
+        // Never silently wait on an impossible safe overlap: a TRIM clears the safe ranges it
+        // covers, so a queued one cannot overlap either. Fail closed (the barrier sends it first)
+        // and retain the witness even in Release builds.
         ++c->Diagnostics.SafeRangeOverlapFound;
         ClearSafePaging(c, QcSafeDirectWrite);
         safe = false;
@@ -2506,7 +2550,8 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
         ++c->Diagnostics.WriteThroughWrites;
         Publish(c);
     }
-    if (!c->Enabled && !c->State.DirtyBytes)
+    // A queued ordered TRIM is pending lower work too: the barrier below sends it first.
+    if (!c->Enabled && !c->State.DirtyBytes && !c->QueuedTrims)
     {
         InvalidateSafePaging(c, offset.QuadPart, end, QcSafeDirectWrite);
         if (c->FlushOrderMode) Publish(c);
@@ -3656,13 +3701,29 @@ static bool OffloadTrim(QC_CACHE* c, PIRP irp, ULONG fence, LONGLONG low, LONGLO
     KeSetEvent(&c->PagingWork, IO_NO_INCREMENT, FALSE);
     return true;
 }
-// The lower TRIM of TrimFences[fence] returned: count it and lift its fence.
-static void FinishAsyncTrim(QC_CACHE* c, ULONG fence, NTSTATUS status)
+// The lower TRIM of TrimFences[fence] returned, or a queued one was dropped unsent: count it and
+// lift its fence.
+static void FinishAsyncTrim(QC_CACHE* c, ULONG fence, NTSTATUS status, bool sent)
 {
     AcquireCache(c);
     if (NT_SUCCESS(status))
         ++c->TrimRequests;
     auto& entry = c->TrimFences[fence];
+    if (entry.Queued)
+    {
+        // Its caller already succeeded. A failed or unsent TRIM only leaves older bytes in
+        // sectors the file system no longer uses, so neither faults the cache.
+        --c->QueuedTrims;
+        if (!sent)
+            ++c->Diagnostics.OrderedTrimsDropped;
+        else
+        {
+            ++c->Diagnostics.OrderedTrimsSent;
+            if (!NT_SUCCESS(status))
+                ++c->Diagnostics.OrderedTrimFailures;
+        }
+        entry.Queued = entry.Sending = FALSE;
+    }
     auto ranges = entry.Ranges;
     if (FlushOrdering(c))
     {
@@ -3724,6 +3785,46 @@ static NTSTATUS RunAsyncTrim(QC_CACHE* c, const QC_PAGING_READ* entry)
     }
     status = OriginalIo(c, entry->Irp, false);
     FinishAsyncTrim(c, entry->Fence, status);
+    return status;
+}
+// Drainer zero, Mutex released: a queued ordered TRIM's lower request, rebuilt from its fence
+// with the caller's flags (that request already completed). *sent: it reached the lower device.
+static NTSTATUS SendQueuedTrim(QC_CACHE* c, const DEVICE_DATA_SET_RANGE* ranges, ULONG count, ULONG flags, bool* sent)
+{
+    *sent = false;
+    constexpr ULONG header = (sizeof(DEVICE_MANAGE_DATA_SET_ATTRIBUTES) + alignof(DEVICE_DATA_SET_RANGE) - 1) /
+                             alignof(DEVICE_DATA_SET_RANGE) * alignof(DEVICE_DATA_SET_RANGE);
+    // The merged ranges came from one caller request whose aligned range array followed its header
+    // within a ULONG input length, so this request is never longer.
+    const auto rangeBytes = count * static_cast<ULONG>(sizeof(DEVICE_DATA_SET_RANGE));
+    const auto length = header + rangeBytes;
+    auto request = static_cast<DEVICE_MANAGE_DATA_SET_ATTRIBUTES*>(ExAllocatePool2(POOL_FLAG_NON_PAGED, length, Tag));
+    if (!request)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    request->Size = sizeof(*request);
+    request->Action = DeviceDsmAction_Trim;
+    request->Flags = flags;
+    request->DataSetRangesOffset = header;
+    request->DataSetRangesLength = rangeBytes;
+    RtlCopyMemory(reinterpret_cast<PUCHAR>(request) + header, ranges, rangeBytes);
+    KEVENT completed;
+    KeInitializeEvent(&completed, NotificationEvent, FALSE);
+    IO_STATUS_BLOCK iosb = {};
+    auto irp = IoBuildDeviceIoControlRequest(IOCTL_STORAGE_MANAGE_DATA_SET_ATTRIBUTES, c->Lower, request, length,
+                                             nullptr, 0, FALSE, &completed, &iosb);
+    if (!irp)
+    {
+        ExFreePoolWithTag(request, Tag);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    *sent = true;
+    auto status = IoCallDriver(c->Lower, irp);
+    if (status == STATUS_PENDING)
+    {
+        KeWaitForSingleObject(&completed, Executive, KernelMode, FALSE, nullptr);
+        status = iosb.Status;
+    }
+    ExFreePoolWithTag(request, Tag); // METHOD_BUFFERED: the request was copied into the IRP's buffer.
     return status;
 }
 // True while an asynchronous lower TRIM overlapping [first, end) is outstanding.
@@ -3844,6 +3945,10 @@ static bool TryTrim(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* resul
         // Asynchronous lower TRIM: drop the cached data now, fence the ranges so no
         // newer version drains before the lower TRIM completes, and let an offload
         // thread send it while this worker continues with later requests.
+        // Ordered Fast (plan 216): queue it instead. The caller completes now and drainer zero
+        // sends the lower TRIM after every earlier group, like a write. Completing only after it
+        // held the file system behind the whole backlog: 262 s after a flush-heavy burst on C:.
+        const bool queue = FlushOrdering(c) && c->Enabled;
         ULONG fence = QcTrimFenceSlots;
         for (ULONG i = 0; i < QcTrimFenceSlots && fence == QcTrimFenceSlots; ++i)
             if (!c->TrimFences[i].Ranges)
@@ -3872,7 +3977,16 @@ static bool TryTrim(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* resul
             entry.Count = merged;
             entry.Low = owned[0].StartingOffset;
             entry.High = owned[merged - 1].StartingOffset + static_cast<LONGLONG>(owned[merged - 1].LengthInBytes);
+            entry.Flags = input->Flags;
+            entry.Queued = queue;
+            entry.Sending = FALSE;
             ++c->TrimFenceCount;
+            if (queue)
+            {
+                if (c->DrainEpoch < entry.Epoch) ++c->Diagnostics.EpochTrimWaits; // Its lower TRIM waits.
+                ++c->QueuedTrims;
+                ++c->Diagnostics.OrderedTrimsQueued;
+            }
             const auto low = entry.Low, high = entry.High;
             c->TrimPaused = FALSE;
             Publish(c);
@@ -3880,6 +3994,12 @@ static bool TryTrim(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* resul
             WakeDrainers(c);
             ReleaseCache(c);
             // The fence owns the ranges now, on every path below.
+            if (queue)
+            {
+                irp->IoStatus.Information = 0;
+                *result = STATUS_SUCCESS;
+                return true;
+            }
             if (OffloadTrim(c, irp, fence, low, high))
             {
                 InterlockedIncrement64(&c->TrimAsync);
@@ -3895,6 +4015,24 @@ static bool TryTrim(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* resul
         }
         if (owned && owned != ranges)
             ExFreePoolWithTag(owned, Tag);
+        if (queue)
+        {
+            // No fence slot or memory: never hold the caller behind the backlog. Sending no TRIM
+            // is always safe (the disk keeps older bytes the file system no longer uses), and
+            // Windows' scheduled retrim returns the space later.
+            TrimCached(c, ranges, merged, (mode & QcTrimLookup) != 0);
+            ++c->Diagnostics.OrderedTrimsSkipped;
+            c->TrimPaused = FALSE;
+            Publish(c);
+            KeSetEvent(&c->Changed, IO_NO_INCREMENT, FALSE);
+            WakeDrainers(c);
+            ReleaseCache(c);
+            if (ranges != local)
+                ExFreePoolWithTag(ranges, Tag);
+            irp->IoStatus.Information = 0;
+            *result = STATUS_SUCCESS;
+            return true;
+        }
         InterlockedIncrement64(&c->TrimAsyncFallbacks); // no fence slot: ordered path
     }
     const bool ordered = FlushOrdering(c);
@@ -4164,7 +4302,7 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
     if (QcReleasesMedia(irp, stack))
     {
         AcquireCache(c);
-        const bool pending = c->State.DirtyBytes != 0;
+        const bool pending = c->State.DirtyBytes != 0 || c->QueuedTrims; // Queued TRIMs are lower work too.
         if (pending)
         {
             ++c->Diagnostics.OtherBarriers;
@@ -4194,10 +4332,11 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
         if (QcObservationRequest(stack) || !QcMayChangeMedia(stack->Parameters.DeviceIoControl.IoControlCode))
             return OriginalIo(c, irp);
     }
-    // Modifying and unclassified controls (including unsupported TRIM) must not overtake accepted dirty writes.
+    // Modifying and unclassified controls (including unsupported TRIM) must not overtake accepted dirty
+    // writes or queued ordered TRIMs.
     AcquireCache(c);
 
-    bool dirty = c->State.DirtyBytes != 0;
+    bool dirty = c->State.DirtyBytes != 0 || c->QueuedTrims;
     bool resident = c->CleanCount[0] != 0 || c->CleanCount[1] != 0;
     auto error = c->State.LastError;
     ReleaseCache(c);

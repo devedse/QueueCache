@@ -76,9 +76,10 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public const int StrictBacklogWireSize = 1208;
     public const int FlushOrderWireSize = 1280;
     public const int WriteThroughGroupsWireSize = 1312;
-    /// <summary>The newest version: the buffer callers offer, so the driver returns every known field.</summary>
     public const int PagingOrderWireSize = 1416;
-    public const int CurrentWireSize = PagingOrderWireSize;
+    /// <summary>The newest version: the buffer callers offer, so the driver returns every known field.</summary>
+    public const int OrderedTrimWireSize = 1464;
+    public const int CurrentWireSize = OrderedTrimWireSize;
     public CacheAttribution? Attribution { get; init; }
     public CacheUsagePaths? UsagePaths { get; init; }
     public CacheUsageActivities? UsageActivity { get; init; }
@@ -131,6 +132,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public CacheWriteThroughGroups? WriteThroughGroups { get; init; }
     /// <summary>V28: capability and evidence for safe page-file write ordering.</summary>
     public CachePagingOrder? PagingOrder { get; init; }
+    /// <summary>V29 (plan 216): ordered Fast TRIMs completed when queued and their later lower TRIMs.</summary>
+    public CacheOrderedTrims? OrderedTrims { get; init; }
     public static CacheDiagnostics Decode(ReadOnlySpan<byte> bytes)
     {
         var expectedVersion = bytes.Length switch
@@ -163,6 +166,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             FlushOrderWireSize => 26u,
             WriteThroughGroupsWireSize => 27u,
             PagingOrderWireSize => 28u,
+            OrderedTrimWireSize => 29u,
             _ => 0u
         };
         if (expectedVersion == 0 || BinaryPrimitives.ReadUInt32LittleEndian(bytes) != expectedVersion ||
@@ -379,6 +383,18 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             pagingOrder = new(fields[0], fields[1], fields[2], fields[3], fields[4], fields[5],
                 fields[6], fields[7], fields[8], fields[9], fields[10], fields[11], fields[12]);
         }
+        CacheOrderedTrims? orderedTrims = null;
+        if (bytes.Length >= OrderedTrimWireSize)
+        {
+            var fields = new ulong[6];
+            for (var i = 0; i < fields.Length; ++i)
+                fields[i] = BinaryPrimitives.ReadUInt64LittleEndian(bytes[(PagingOrderWireSize + 8 * i)..]);
+            orderedTrims = new(fields[0], fields[1], fields[2], fields[3], fields[4], fields[5]);
+            // One snapshot under the cache lock; Sent + Dropped + Pending == Queued is a quiescent check for scenarios.
+            if (orderedTrims.Failures > orderedTrims.Sent || orderedTrims.Sent + orderedTrims.Dropped > orderedTrims.Queued ||
+                orderedTrims.Pending > orderedTrims.Queued)
+                throw new InvalidDataException("Inconsistent ordered TRIM counters.");
+        }
         if (writeThroughGroups is { Available: > 1 })
             throw new InvalidDataException("Invalid write-through availability.");
         if (flushOrder is { Mode: > 2 } || flushOrder is { CurrentEpoch: 0 } or { DrainingEpoch: 0 } ||
@@ -415,7 +431,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             StrictBacklog = strictBacklog,
             FlushOrder = flushOrder,
             WriteThroughGroups = writeThroughGroups,
-            PagingOrder = pagingOrder
+            PagingOrder = pagingOrder,
+            OrderedTrims = orderedTrims
         };
     }
 }
@@ -494,6 +511,11 @@ public sealed record CacheStagedReads(ulong Requests, ulong Bytes, ulong MixedRe
 /// <summary>Requests served on the dispatching thread instead of the request worker.</summary>
 public sealed record CacheCallerPath(ulong Reads, ulong Writes, ulong Declined);
 
+/// <summary>V29 (plan 216), ordered Fast only: TRIMs completed to their caller when queued; their lower TRIMs sent
+/// by the drain after every earlier group, and the sent ones that failed (the caller had already succeeded); queued
+/// ones never sent because no request could be built at their turn; TRIMs completed without any lower TRIM because no
+/// fence slot or memory was free; and those queued now, including one being sent. Lifetime counts except Pending.</summary>
+public sealed record CacheOrderedTrims(ulong Queued, ulong Sent, ulong Failures, ulong Dropped, ulong Skipped, ulong Pending);
 /// <summary>V28. Presence is the loaded driver's system-volume ordering capability. Last clear reason:
 /// 0 none, 1 enable, 2 disable, 3 allocation, 4 mode, 5 usage, 6 removal, 7 cached write,
 /// 8 other direct write, 9 TRIM, 10 seed replacement. Classification counters count writes only.</summary>
