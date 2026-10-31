@@ -118,7 +118,9 @@ seconds, and so does the lab volume's file system after a lab phase. Since plan 
 the campaign preflight waits up to about 30 s, and since plan 171 every clean-cache
 capture waits up to 15 s, for those writes to drain on their own; nothing is drained
 for them, and a cache that stays dirty is still refused. There is no `--detach`: run the foreground command and let
-it finish. Results go to a new folder under `--output`.
+it finish. Results go to a new folder under `--output`. Keep `--output` off the
+measured volume (C: for a Q: campaign): a campaign that writes its own results to
+Q: keeps Q:'s cache from going quiet, and the recall phase stops INCOMPLETE.
 
 Use the smallest thing that answers the question: a single suite or `experiment`
 while iterating, `focused` when a change touches the retained correctness paths,

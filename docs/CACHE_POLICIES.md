@@ -302,14 +302,19 @@ power loss, other file systems and other storage are not tested (see
 flush very often slow down once the cache fills. It applies to Fast only;
 Strict already waits for the disk, so Strict with ordering is refused. The Windows
 volume requires a matching loaded driver with Diagnostics V28. Older drivers are
-refused before draining, with an update message. C: paging and reset qualification
-is in progress ([#32](https://github.com/devedse/QueueCache/issues/32)); the proven
-crash scope above remains NTFS data volumes. Hibernation, Fast Startup and physical
-power loss have not been qualified.
+refused before draining, with an update message. In the C: tests on the VM
+([#32](https://github.com/devedse/QueueCache/issues/32), 0.4.910.1/0.4.912.1)
+ordering kept NTFS clean in six of seven power cuts, including one with page-file
+writes under memory pressure, while the same early-churn cut with ordering off
+damaged C:. The page-file growth cut could not be made and the scope decision is
+open, so the proven crash scope above remains NTFS data volumes. Hibernation, Fast
+Startup and physical power loss have not been qualified.
 A new paging-file range must wait until earlier saves reach the disk. A large queue
 of flush groups can therefore pause Windows during paging-file growth, even when
-the queued bytes fit in RAM. The C: pressure check bounds its writer load; it
-does not establish responsiveness under a saturated flush backlog.
+the queued bytes fit in RAM. In the growth cuts, with the write-out slowed by a lab
+delay, Windows refused memory commits that needed a larger page file until the
+backlog had drained (81 s in one attempt). The C: pressure check bounds its writer
+load; it does not establish responsiveness under a saturated flush backlog.
 
 Page-file data is not retained in the cache. With ordering on, a page-file write
 can skip the full-cache boundary only inside an established safe extent. A new
