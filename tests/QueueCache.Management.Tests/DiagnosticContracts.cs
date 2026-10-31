@@ -36,7 +36,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 219, "plan 219 adds page-file preparation and offloaded page-file learner checks to flush-order");
+        Check(VerificationPlan.Version == 220, "plan 220 removes only the overlapping part of the safe page-file set");
         var progressOptions = new VerificationOptions("W:", PagingReadProgressScenario.Suite, BudgetMiB: 256);
         VerificationPlan.Validate(progressOptions);
         Check(VerificationPlan.Integrity(progressOptions).Single().Id == "paging-read-progress-v215" &&
@@ -286,8 +286,12 @@ internal static class DiagnosticContracts
             { Clears = 1, SafeRanges = 0, LastClearReason = 7 } };
         PagingOrderScenario.ValidateClear(pagingBefore, clearing, 7);
         Reject(() => PagingOrderScenario.ValidateClear(pagingBefore, clearing, 9));
+        // Plan 220: only the overlapping part is removed, so ranges may remain (one more when a range split).
+        PagingOrderScenario.ValidateClear(pagingBefore, clearing with { PagingOrder = clearing.PagingOrder! with { SafeRanges = 2 } }, 7);
         Reject(() => PagingOrderScenario.ValidateClear(pagingBefore, clearing with
-            { PagingOrder = clearing.PagingOrder! with { SafeRanges = 1 } }, 7));
+            { PagingOrder = clearing.PagingOrder! with { SafeRanges = 3 } }, 7));
+        Reject(() => PagingOrderScenario.ValidateClear(pagingBefore, clearing with
+            { PagingOrder = clearing.PagingOrder! with { Clears = 0 } }, 7));
         var guardedPaging = new VerificationOptions("C:", "system-paging-ordering", BudgetMiB: 2048,
             SystemInstance: "SCSI/test", SystemBytes: 100L << 30, RecoverableVm: true);
         VerificationPlan.Validate(guardedPaging);
@@ -540,11 +544,11 @@ internal static class DiagnosticContracts
             drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
         Reject(() => TelemetryCoverage.Validate(completeDrain.Where((_, i) => i is < 60 or > 63).ToArray(),
             drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
-        Check(VerificationPlan.Integrity(new("Q:", "flush-order")).SequenceEqual([new IntegrityCase("flush-order-v219", "flush-order")]) &&
+        Check(VerificationPlan.Integrity(new("Q:", "flush-order")).SequenceEqual([new IntegrityCase("flush-order-v220", "flush-order")]) &&
             VerificationPlan.InjectsLabFaults("flush-order"), "ordering suite runs only its owned checks and records deliberate fault recovery");
         var orderCampaign = VerificationCampaignPlan.Create(new(new("Q:", "quick", Repeats: 1), "experiment", "W:", FocusSuite: "flush-order", PauseBackingCache: true));
         Check(orderCampaign.Count == 1 && orderCampaign[0].Role == CampaignTargetRole.NtfsLab &&
-            orderCampaign[0].ExpectedCases.SequenceEqual(["flush-order-v219"]), "ordering experiment pauses the backing cache and targets only the disposable lab role");
+            orderCampaign[0].ExpectedCases.SequenceEqual(["flush-order-v220"]), "ordering experiment pauses the backing cache and targets only the disposable lab role");
         var orderRecovery = new RecoverySnapshot(1, new DiskTarget('Q', 99990, 8L << 30, "fixture"),
             new(0, 0, 8UL << 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), false, "[]", DateTimeOffset.UnixEpoch, "fixture", FlushOrderMode: 0);
         Check(VerificationWorker.RestorationMismatches(orderRecovery, orderRecovery.State, orderRecovery.State, "[]", 0,

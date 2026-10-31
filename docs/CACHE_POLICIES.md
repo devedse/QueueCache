@@ -320,9 +320,12 @@ The C: pressure check bounds its writer
 load; it does not establish responsiveness under a saturated flush backlog.
 
 Page-file data is not retained in the cache. With ordering on, a page-file write
-can skip the full-cache boundary only inside an established safe extent. A new
-extent first writes out all earlier saves; overlapping cached writes, other direct
-writes or TRIM invalidate the safe set. This prevents page-file growth from
+can skip the full-cache boundary only inside an established safe extent. The first
+write into a new extent waits until all earlier saves are on the disk; since plan 219
+it waits off the request worker, so other requests keep moving. An overlapping cached
+write, other direct write or TRIM removes the part it touches from the safe set (plan
+220; before, it cleared the whole set, so after a page-file shrink every page-out
+waited for the backlog). This prevents page-file growth from
 writing over a deleted file whose deletion is still waiting in RAM. Page-ins keep
 the immediate dispatch path so lower drivers can fault pages while the worker waits.
 When an ordered cache is enabled or restored, management tries to seed current

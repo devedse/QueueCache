@@ -560,7 +560,9 @@ public sealed record CacheOrderedFlushes(ulong Offloaded, ulong Fallbacks, ulong
 /// LastBarrierAction and LearnPending.</summary>
 public sealed record CachePageFileGrowth(ulong PreparationsForwarded, ulong NotificationsForwarded, ulong LastBarrierAction,
     ulong LearnOffloaded, ulong LearnFallbacks, ulong LearnPending);
-/// <summary>V28. Presence is the loaded driver's system-volume ordering capability. Last clear reason:
+/// <summary>V28. Presence is the loaded driver's system-volume ordering capability. Clears counts invalidations; since
+/// plan 220 an overlapping write or TRIM removes only its part of the set (a full clear only on lifecycle events or when a
+/// split does not fit). Last clear reason:
 /// 0 none, 1 enable, 2 disable, 3 allocation, 4 mode, 5 usage, 6 removal, 7 cached write,
 /// 8 other direct write, 9 TRIM, 10 seed replacement. Classification counters count writes only.</summary>
 public sealed record CachePagingOrder(ulong Bypasses, ulong BypassBytes, ulong LearnBarriers,

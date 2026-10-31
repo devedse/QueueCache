@@ -177,7 +177,13 @@ request worker (offloaded +1, one waiting, no fallback), and a write and read in
 another file must complete within one second meanwhile (NTFS itself serialises a
 non-cached write with a pending paging write to the same file). It must be submitted after
 the held write retired and flushed, be learned (its next write bypasses), and every
-block must match. Missing V31 evidence fails both.
+block must match. Missing V31 evidence fails both. Plan 220 (case `flush-order-v220`)
+removes only the overlapping part of the safe page-file set when a cached write, another
+direct write or a TRIM touches it (a page-file shrink TRIMs the clusters it gives up),
+instead of clearing the whole set. `paging-cached-overlap-removes-range` and
+`paging-trim-overlap-removes-range` replace the two `-clears` checks: the touched range
+must learn again on its next paging write, and a write to an untouched seeded range must
+still skip the queue (bypasses +1, no learning).
 Plan 207 added eight paging-ordering checks to standalone `flush-order`. Plan 209 uses case `flush-order-v209`:
 seed boundary, stale layout token refusal, safe bypass while an older write is held, new-range learning,
 cached-write, disabled direct-write and TRIM invalidation, and zero safe overlaps. The explicit synthetic-paging

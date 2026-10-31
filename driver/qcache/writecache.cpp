@@ -105,11 +105,21 @@ static void ClearSafePaging(QC_CACHE* c, QC_SAFE_CLEAR_REASON reason)
         c->SafePaging.Low = c->SafePaging.High = 0;
     }
 }
+// A cached write, another direct write or a TRIM over safe page-file clusters means they are no longer the page
+// file's. Since plan 220 only that part stops being safe: a page-file shrink TRIMs the clusters it gives up, and
+// clearing the whole set made every later page-out wait for the whole backlog (#32). Counted as a clear.
 static void InvalidateSafePaging(QC_CACHE* c, LONGLONG first, LONGLONG end, QC_SAFE_CLEAR_REASON reason)
 {
     if (!c->FlushOrderMode && !c->SafePaging.Count) return;
     AdvanceSafeMutation(c);
-    if (QcSafePagingOverlaps(c->SafePaging, first, end)) ClearSafePaging(c, reason);
+    if (!QcSafePagingOverlaps(c->SafePaging, first, end)) return;
+    if (!QcSafePagingRemove(c->SafePaging, first, end))
+    {
+        ClearSafePaging(c, reason); // A split would not fit: fail closed.
+        return;
+    }
+    ++c->Diagnostics.SafeRangeClears;
+    c->Diagnostics.SafeRangeLastClearReason = reason;
 }
 static void WakeDrainers(QC_CACHE* c)
 {
