@@ -46,6 +46,20 @@ public static class SystemPreflightGuard
             throw new ArgumentException("system-app-session requires --budget-mib between 1024 and 2048.");
     }
 
+    /// <summary>The guarded options a worker job stands for. A durability writer's OraclePath is the run's own output
+    /// (durability-oracle.json beside its reply), not a user --oracle; only the verify job carries the user's.</summary>
+    public static VerificationOptions WorkerOptions(WorkerJob job)
+    {
+        var suite = job.Operation == "compare-target" || ChangesSystemCache(job.Suite) ? job.Suite! : job.Operation;
+        var writer = job.Operation == suite && ComparisonPlan.IsDurabilityWrite(suite);
+        if (writer && (job.OraclePath is null || !string.Equals(Path.GetDirectoryName(Path.GetFullPath(job.OraclePath)),
+                Path.GetDirectoryName(Path.GetFullPath(job.Reply)), StringComparison.OrdinalIgnoreCase)))
+            throw new ArgumentException("A C: durability writer records its oracle only in its own run directory.");
+        return new(job.Volume, suite, BudgetMiB: job.BudgetMiB, SystemInstance: job.SystemInstance, SystemBytes: job.SystemBytes,
+            RecoverableVm: job.RecoverableVm, Product: job.Product,
+            OraclePath: ChangesSystemCache(job.Suite) || writer ? null : job.OraclePath);
+    }
+
     public static void ValidateTargets(DiskTarget target, DiskTarget output,
         string expectedInstance, long expectedBytes)
     {

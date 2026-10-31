@@ -301,11 +301,7 @@ public static class VerificationWorker
         if (SystemPreflightGuard.IsSystemDurability(job.Volume, job.Operation == "compare-target" ? job.Suite! : job.Operation) ||
             SystemPreflightGuard.ChangesSystemCache(job.Suite))
         {
-            var suite = job.Operation == "compare-target" ? job.Suite! :
-                SystemPreflightGuard.ChangesSystemCache(job.Suite) ? job.Suite! : job.Operation;
-            SystemPreflightGuard.ValidateOptions(new(job.Volume, suite, BudgetMiB: job.BudgetMiB,
-                SystemInstance: job.SystemInstance, SystemBytes: job.SystemBytes, RecoverableVm: job.RecoverableVm,
-                Product: job.Product, OraclePath: SystemPreflightGuard.ChangesSystemCache(job.Suite) ? null : job.OraclePath));
+            SystemPreflightGuard.ValidateOptions(SystemPreflightGuard.WorkerOptions(job));
             var guardedTarget = await DiskTarget.InspectAsync(job.Volume);
             var guardedOutput = await DiskTarget.InspectAsync(SystemPreflightGuard.OutputVolume(Path.GetDirectoryName(job.Reply)!));
             SystemPreflightGuard.ValidateTargets(guardedTarget, guardedOutput, job.SystemInstance!, job.SystemBytes!.Value);

@@ -256,6 +256,32 @@ internal static class DiagnosticContracts
         VerificationPlan.Validate(guardedCut);
         try { VerificationPlan.Validate(guardedCut with { RecoverableVm = false }); throw new Exception("Unguarded C: cut accepted"); }
         catch (ArgumentException) { }
+        // The worker re-checks what its job stands for: a writer's oracle is the run's own output, not a user --oracle.
+        var cutRun = Path.Combine(Path.GetTempPath(), "QueueCache-Verify-cut-fixture");
+        foreach (var writer in new[] { "compare-durability-write", "compare-durability-churn" })
+        {
+            var writeJob = new WorkerJob(writer, "C:", Path.Combine(cutRun, "worker-00002.reply.json"), SystemInstance: "SCSI/test",
+                SystemBytes: 100L << 30, RecoverableVm: true, OraclePath: Path.Combine(cutRun, "durability-oracle.json"),
+                Product: "QueueCache fixture", Suite: writer);
+            SystemPreflightGuard.ValidateOptions(SystemPreflightGuard.WorkerOptions(writeJob));
+            SystemPreflightGuard.ValidateOptions(SystemPreflightGuard.WorkerOptions(writeJob with
+                { Operation = "compare-target", Reply = Path.Combine(cutRun, "worker-00001.reply.json"), OraclePath = null }));
+            foreach (var invalid in new[] { writeJob with { OraclePath = null },
+                writeJob with { OraclePath = Path.Combine(Path.GetTempPath(), "elsewhere", "durability-oracle.json") }, writeJob with { RecoverableVm = false } })
+            {
+                try { SystemPreflightGuard.ValidateOptions(SystemPreflightGuard.WorkerOptions(invalid)); throw new Exception("Invalid C: writer job accepted"); }
+                catch (ArgumentException) { }
+            }
+        }
+        var verifyJob = new WorkerJob("compare-durability-verify", "C:", Path.Combine(cutRun, "verify.reply.json"), SystemInstance: "SCSI/test",
+            SystemBytes: 100L << 30, RecoverableVm: true, OraclePath: Path.Combine(cutRun, "durability-oracle.json"),
+            Product: "QueueCache fixture", Suite: "compare-durability-verify");
+        SystemPreflightGuard.ValidateOptions(SystemPreflightGuard.WorkerOptions(verifyJob));
+        try { SystemPreflightGuard.ValidateOptions(SystemPreflightGuard.WorkerOptions(verifyJob with { OraclePath = null })); throw new Exception("C: verify without oracle accepted"); }
+        catch (ArgumentException) { }
+        SystemPreflightGuard.ValidateOptions(SystemPreflightGuard.WorkerOptions(new WorkerJob("paging-order-write", "C:", Path.Combine(cutRun, "paging.reply.json"),
+            BudgetMiB: 2048, SystemInstance: "SCSI/test", SystemBytes: 100L << 30, RecoverableVm: true, OraclePath: Path.Combine(cutRun, "paging.json"),
+            Suite: SystemPagingOrdering.Suite)));
         var pressureState = new WriteCacheState(1, 0, 8UL << 30, 2UL << 30, 2UL << 30, 4096, 0, 2UL << 30, 1, 4096, 0, 0, 0, 0, 0, 4096);
         var pressurePerformance = new CachePerformance(1_000_000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
         var pressureRows = Enumerable.Range(0, 121).Select(i => new TelemetrySnapshot(DateTimeOffset.UnixEpoch.AddSeconds(i), i,
