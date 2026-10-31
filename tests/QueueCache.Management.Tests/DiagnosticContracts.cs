@@ -36,7 +36,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 217, "plan 217 requires an ordered explicit flush to leave later requests moving");
+        Check(VerificationPlan.Version == 218, "plan 218 accepts a later TRIM still queued after an explicit flush that no longer holds requests");
         var progressOptions = new VerificationOptions("W:", PagingReadProgressScenario.Suite, BudgetMiB: 256);
         VerificationPlan.Validate(progressOptions);
         Check(VerificationPlan.Integrity(progressOptions).Single().Id == "paging-read-progress-v215" &&
@@ -435,11 +435,11 @@ internal static class DiagnosticContracts
             drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
         Reject(() => TelemetryCoverage.Validate(completeDrain.Where((_, i) => i is < 60 or > 63).ToArray(),
             drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
-        Check(VerificationPlan.Integrity(new("Q:", "flush-order")).SequenceEqual([new IntegrityCase("flush-order-v217", "flush-order")]) &&
+        Check(VerificationPlan.Integrity(new("Q:", "flush-order")).SequenceEqual([new IntegrityCase("flush-order-v218", "flush-order")]) &&
             VerificationPlan.InjectsLabFaults("flush-order"), "ordering suite runs only its owned checks and records deliberate fault recovery");
         var orderCampaign = VerificationCampaignPlan.Create(new(new("Q:", "quick", Repeats: 1), "experiment", "W:", FocusSuite: "flush-order", PauseBackingCache: true));
         Check(orderCampaign.Count == 1 && orderCampaign[0].Role == CampaignTargetRole.NtfsLab &&
-            orderCampaign[0].ExpectedCases.SequenceEqual(["flush-order-v217"]), "ordering experiment pauses the backing cache and targets only the disposable lab role");
+            orderCampaign[0].ExpectedCases.SequenceEqual(["flush-order-v218"]), "ordering experiment pauses the backing cache and targets only the disposable lab role");
         var orderRecovery = new RecoverySnapshot(1, new DiskTarget('Q', 99990, 8L << 30, "fixture"),
             new(0, 0, 8UL << 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), false, "[]", DateTimeOffset.UnixEpoch, "fixture", FlushOrderMode: 0);
         Check(VerificationWorker.RestorationMismatches(orderRecovery, orderRecovery.State, orderRecovery.State, "[]", 0,
@@ -462,6 +462,8 @@ internal static class DiagnosticContracts
         FlushOrderScenario.ValidateQueuedTrim(trimBefore, trimQueued, .002, held: true);
         FlushOrderScenario.ValidateQueuedTrim(trimBefore, trimQueued with { LabGate = null }, .002, held: false);
         FlushOrderScenario.ValidateTrimSent(trimQueued, trimSent);
+        // Plan 218 (first plan-217 run on 0.4.908.1): NTFS queued another TRIM in a later group while the flush waited.
+        FlushOrderScenario.ValidateTrimSent(trimQueued, trimSent with { OrderedTrims = new(5, 4, 0, 0, 0, 1) });
         // The 0.4.906.1 shape: the TRIM returned only after the hold released and its lower TRIM was done.
         Reject(() => FlushOrderScenario.ValidateQueuedTrim(trimBefore, trimSent, 4.1, held: true));
         Reject(() => FlushOrderScenario.ValidateQueuedTrim(trimBefore, trimQueued with { LabGate = trimSent.LabGate }, .002, held: true));
@@ -473,7 +475,9 @@ internal static class DiagnosticContracts
             trimQueued with { FlushOrder = trimQueued.FlushOrder! with { DrainingEpoch = 3 } } })
             Reject(() => FlushOrderScenario.ValidateQueuedTrim(trimBefore, wrong, .002, held: true));
         foreach (var wrong in new[] { trimSent with { OrderedTrims = new(4, 4, 1, 0, 0, 0) }, trimSent with { OrderedTrims = new(4, 3, 0, 1, 0, 0) },
-            trimSent with { OrderedTrims = new(5, 4, 0, 0, 0, 1) }, trimSent with { FlushOrder = trimQueued.FlushOrder } })
+            trimSent with { OrderedTrims = new(5, 4, 0, 0, 0, 0) }, trimSent with { OrderedTrims = new(4, 3, 0, 0, 0, 1) },
+            trimSent with { FlushOrder = trimQueued.FlushOrder },
+            trimSent with { FlushOrder = trimSent.FlushOrder! with { DrainingEpoch = 3 } } })
             Reject(() => FlushOrderScenario.ValidateTrimSent(trimQueued, wrong));
         // Plan 217: the explicit flush waits off the request worker while the earlier group's write is held.
         var flushBefore = orderBefore with { FlushOrder = new(1, 3, 2, 2, 1, 0, 0, 0, 2), OrderedFlushes = new(5, 1, 0),

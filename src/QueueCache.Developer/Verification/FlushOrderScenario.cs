@@ -88,15 +88,17 @@ public static class FlushOrderScenario
             throw new InvalidDataException("The TRIM was not queued behind its earlier group with its lower TRIM unsent.");
     }
 
-    /// <summary>The explicit flush sent the queued lower TRIM, successfully, and left none queued.</summary>
+    /// <summary>The explicit flush sent the queued lower TRIM, successfully: the frontier passed every group open when
+    /// it was queued (TRIMs are sent in group order and none was dropped). Since plan 217 the flush leaves later requests
+    /// moving, so a TRIM NTFS queues meanwhile in a later group may still be pending (plan 218).</summary>
     public static void ValidateTrimSent(CacheDiagnostics queued, CacheDiagnostics after)
     {
         var a = Trims(queued);
         var b = Trims(after);
         var oa = queued.FlushOrder ?? throw new InvalidDataException("Missing queued-TRIM ordering evidence.");
         var ob = after.FlushOrder ?? throw new InvalidDataException("Missing post-flush ordering evidence.");
-        if (b.Sent != a.Sent + 1 || b.Pending != 0 || b.Failures != a.Failures || b.Dropped != a.Dropped ||
-            b.Sent + b.Dropped + b.Pending != b.Queued || ob.Flushes <= oa.Flushes)
+        if (b.Sent < a.Sent + 1 || b.Failures != a.Failures || b.Dropped != a.Dropped ||
+            b.Sent + b.Dropped + b.Pending != b.Queued || ob.Flushes <= oa.Flushes || ob.DrainingEpoch <= oa.CurrentEpoch)
             throw new InvalidDataException("The explicit flush did not send the queued lower TRIM after its predecessors.");
     }
 
