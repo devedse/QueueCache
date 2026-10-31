@@ -19,7 +19,7 @@ still to do. Open items link to their details.
 | Issue | Fixed | Build or status |
 |---|:-:|---|
 | [Fast mode without write ordering: a crash can damage the file system](#fast-mode-without-write-ordering-can-damage-the-file-system-in-a-crash) | ❌ | By design: write ordering stays off by default because programs that flush very often slow down. Qualified for NTFS data drives; C: qualification is tracked below. See the fixed #13 row |
-| [Write ordering on C:](https://github.com/devedse/QueueCache/issues/32) | ❌ | Qualification in progress. Bounded live correctness passed on 0.4.897.1, 0.4.900.1, 0.4.906.1 and 0.4.907.1. The cost comparison found that a TRIM waiting behind a large save-point backlog held C: for 262 s (fixed in plan 216, validated), then that an explicit cache flush behind the same backlog held every C: request for 386 s; plan 217 lets that flush wait without holding other requests, pending validation. Cost and C: reset qualification remain pending. Earlier coverage failures are retained. The app offers it only with a matching V28 driver. |
+| [Write ordering on C:](https://github.com/devedse/QueueCache/issues/32) | ❌ | Qualification in progress. Bounded live correctness passed on 0.4.897.1, 0.4.900.1, 0.4.906.1 and 0.4.907.1. The cost comparison found that a TRIM waiting behind a large save-point backlog held C: for 262 s (fixed in plan 216, validated), then that an explicit cache flush behind the same backlog held every C: request for 386 s; plan 217 lets that flush wait without holding other requests (validated on 0.4.909.1). The fresh cost comparison then passed: normal use 1.3% slower, memory pressure no slower, longest pause 0.32 s. Power cuts on 0.4.910.1: 5 of 7 passed with NTFS clean and untouched files exact; the two memory-pressure cuts (page-file writes skipping the queue, page-file growth) were not made. Release and unordered controls are pending. Earlier coverage failures are retained. The app offers it only with a matching V28 driver. |
 | [High-watermark pressure check stopped the plan-189 release campaign](#high-watermark-pressure-check-stopped-the-plan-189-release-campaign) | ❌ | Not reproduced, [#30](https://github.com/devedse/QueueCache/issues/30): two standalone runs and the complete plan-192 release campaign (11/11 phases, 106/106 cases, restored) passed it with exact counters; the original cause is unproven |
 | [The driver and installer are test-signed](#the-driver-is-test-signed) | ❌ | Production signing not done |
 | [Raw disk reads and writes bypass the cache](#raw-disk-reads-and-writes-bypass-the-cache-by-design) | ❌ | By design |
@@ -243,15 +243,40 @@ meanwhile, which land in later groups. The flush still takes as long as the
 backlog. With ordering off, or when no offload entry is free (four flushes at
 once), it remains a barrier. Diagnostics V30 count offloaded, fallback and waiting
 flushes. The final off arm was not run; original settings were restored and 3,232
-exported records verified. Native validation and a fresh complete cost window are
-required. Cost, C: cuts and release qualification remain pending.
+exported records verified.
+
+On 0.4.909.1 (plans 217/218) under Driver Verifier all 24 ordering checks passed,
+including a later write and read completing in 0.0009 s while an explicit flush
+waited on a held group; the bounded C: pressure check also passed (128 exact files,
+heartbeat maximum 0.255 s). Plan 218 only corrected the TRIM check: NTFS may queue
+another TRIM while the flush no longer holds requests. In the fresh cost window
+(R10, Verifier off, one off/on/off window) ordering on was within every limit:
+normal use 120.9 s against an off mean of 119.5 s (+1.3%), memory pressure 312.0
+s against 312.4 s, longest pressure pause 0.315 s, no unidentified page-file
+write. After the flush-heavy step (2,058 MiB, about 190,000 groups) the arm's
+explicit flush took the new path and waited 8 min 22 s while the drain wrote
+the groups, but the heartbeat's longest pause stayed 0.206 s (R9: 385.9 s).
+
+Power cuts on 0.4.910.1 (runner fix only; same driver code) under Driver
+Verifier, ordering on: the burst, write-through, early churn, late churn and
+explicit-checkpoint cuts passed. Each restarted, `chkdsk /scan` was clean, no NTFS
+warning or error was logged, the untouched guard files were exact, no later write
+reached the disk ahead of an earlier save point, and after the checkpoint every byte
+was exact. The newest churn files were sometimes zero-filled (size recorded, data not
+yet written), which NTFS allows. The cut with page-file writes skipping the queue
+under memory pressure and the page-file growth cut were not made in three attempts
+each: no reset happened, so they show no damage and qualify nothing. Release and
+unordered controls are pending.
 
 **Remaining limit (ordering on):** other full barriers still hold every request
 until the whole backlog is on the disk: a page-file write outside the learned safe
 ranges, a media-changing control, removal, shutdown. After a flush-heavy burst
 that backlog takes minutes at one lower flush per save point (300 to 700 per second
 in these windows). The cost windows record no such barrier after the burst, but they do not
-show it cannot happen.
+show it cannot happen. In the growth cuts, with the write-out slowed by the 200 ms
+lab delay, the page file did not grow for 70 s while about 540 MiB of ordered
+backlog drained, and Windows refused part of a memory commit meanwhile (a pager got
+4.1 of 8 GiB). With ordering off the same pressure grew it within 5 s.
 
 
 - **Checks:** 14/14 targeted live-driver checks passed under Driver Verifier on
