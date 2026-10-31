@@ -319,8 +319,10 @@ writing over a deleted file whose deletion is still waiting in RAM. Page-ins kee
 the immediate dispatch path so lower drivers can fault pages while the worker waits.
 When an ordered cache is enabled or restored, management tries to seed current
 page-file extents behind a full boundary. A generation token rejects a layout
-captured across intervening writes. Layout discovery/staleness is nonfatal: the
-ordered direct path learns ranges instead. A real disk/cache error is still reported.
+captured across intervening writes; Windows writes to C: often enough that one
+attempt can lose that race (1 of 11 cut setups), so a stale seed is retried with a
+fresh token and layout up to five times. Layout discovery/staleness is nonfatal: the
+ordered direct path learns ranges instead, each through a full boundary. A real disk/cache error is still reported.
 The set holds at most 256 merged extents; capacity exhaustion takes the slow path.
 
 Like the preset, it changes only while the

@@ -116,6 +116,31 @@ internal static class DiagnosticContracts
         try { ConfigurationManager.SelectWriteOrdering(ordering, 0UL); throw new Exception("Non-BUSY ordering error accepted."); }
         catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 5) { }
         Check(ordering.Modes.Count == 1, "ordering restoration preserves non-BUSY errors without retry");
+        // A stale safe-paging seed (ERROR_RETRY: a C: write between token and seed) is retried with a fresh token.
+        var seedToken = 0UL; var seededTokens = new List<ulong>();
+        IReadOnlyList<DiskRange> pagingLayout = [new DiskRange(4096, 8192)];
+        ConfigurationManager.SeedSafePaging(() => ++seedToken, () => pagingLayout, (_, token) =>
+            { seededTokens.Add(token); if (token < 3) throw new System.ComponentModel.Win32Exception(1237); });
+        Check(seededTokens.SequenceEqual(new ulong[] { 1, 2, 3 }), "stale safe-paging seed retried with fresh tokens");
+        seedToken = 0; seededTokens.Clear();
+        try
+        {
+            ConfigurationManager.SeedSafePaging(() => ++seedToken, () => pagingLayout, (_, token) =>
+                { seededTokens.Add(token); throw new System.ComponentModel.Win32Exception(1237); });
+            throw new Exception("Unbounded safe-paging seed retry accepted.");
+        }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1237) { }
+        Check(seededTokens.Count == ConfigurationManager.SafePagingSeedAttempts, "safe-paging seed retry is bounded");
+        seededTokens.Clear();
+        try
+        {
+            ConfigurationManager.SeedSafePaging(() => 7, () => pagingLayout, (_, token) =>
+                { seededTokens.Add(token); throw new System.ComponentModel.Win32Exception(5); });
+            throw new Exception("Non-stale safe-paging seed error accepted.");
+        }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 5) { }
+        Check(seededTokens.Count == 1, "only a stale safe-paging seed is retried");
+        ConfigurationManager.SeedSafePaging(() => 1, () => [], (_, _) => throw new Exception("Empty paging layout seeded."));
         // V28 is append-only; older driver evidence remains unavailable rather than fabricated zero.
         var pagingWire = new byte[CacheDiagnostics.PagingOrderWireSize];
         BinaryPrimitives.WriteUInt32LittleEndian(pagingWire, 28);

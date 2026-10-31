@@ -131,11 +131,9 @@ public static class ConfigurationManager
         {
             try
             {
-                // Read the token before the layout. A write or lifecycle change
-                // during discovery makes the driver reject the stale seed.
-                var sequence = device.GetDiagnostics().PagingOrder!.SeedSequence;
-                var map = SpecialFileMap.PagingFiles(target);
-                if (map.Ranges.Count != 0) device.SetSpecialRanges(map.Ranges, SpecialRangeKind.SafePaging, sequence);
+                SeedSafePaging(() => device.GetDiagnostics().PagingOrder!.SeedSequence,
+                    () => SpecialFileMap.PagingFiles(target).Ranges,
+                    (ranges, sequence) => device.SetSpecialRanges(ranges, SpecialRangeKind.SafePaging, sequence));
             }
             catch (Exception ex) when (ex is IOException or Win32Exception or UnauthorizedAccessException or NotSupportedException or ArgumentException)
             {
@@ -146,6 +144,30 @@ public static class ConfigurationManager
             }
         }
         return applied;
+    }
+
+    internal const int SafePagingSeedAttempts = 5;
+    private const int ErrorRetry = 1237;
+
+    /// <summary>Reads the token before the layout: a write or lifecycle change during discovery makes the driver
+    /// reject the stale seed (ERROR_RETRY). Windows writes to C: often enough that one attempt can lose that race
+    /// and leave every paging range on the ordered slow path, so a stale seed is retried with a fresh token and
+    /// layout a few times; any other error is not retried.</summary>
+    internal static void SeedSafePaging(Func<ulong> token, Func<IReadOnlyList<DiskRange>> layout,
+        Action<IReadOnlyList<DiskRange>, ulong> seed)
+    {
+        for (var attempt = 1; ; ++attempt)
+        {
+            var sequence = token();
+            var ranges = layout();
+            if (ranges.Count == 0) return;
+            try
+            {
+                seed(ranges, sequence);
+                return;
+            }
+            catch (Win32Exception ex) when (ex.NativeErrorCode == ErrorRetry && attempt < SafePagingSeedAttempts) { }
+        }
     }
 
     internal static void RequireOrderingSupport(bool requested, bool systemVolume, CacheDiagnostics diagnostics)
