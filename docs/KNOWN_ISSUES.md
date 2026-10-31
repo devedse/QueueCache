@@ -267,8 +267,8 @@ NTFS warning or error was logged, the untouched guard files were exact, no later
 write reached the disk ahead of an earlier save point, and after the checkpoint
 every byte was exact. The newest churn files were sometimes zero-filled (size
 recorded, data not yet written), which NTFS allows. The page-file growth cut was not
-made in five attempts: with ordering on, Windows did not grow the page file while
-the slowed write-out was still behind (see the limit below), so no reset happened
+made in five attempts: the request Windows sends before growing the page file
+waited for the whole slowed write-out (see the limit below), so no reset happened
 and it qualifies nothing. 0.4.912.1 also retries a stale page-file layout when
 ordering is applied; one setup in eleven had lost that race and fallen back to
 learning the ranges (slower, still safe). With Verifier off, the release regression
@@ -292,13 +292,26 @@ until the whole backlog is on the disk: a page-file write outside the learned sa
 ranges, a media-changing control, removal, shutdown. After a flush-heavy burst
 that backlog takes minutes at one lower flush per save point (300 to 700 per second
 in these windows). The cost windows record no such barrier after the burst, but they do not
-show it cannot happen. In the growth cuts, with the write-out slowed by the 200 ms
-lab delay, Windows grew the page file late or not at all while the ordered backlog
-drained, and refused memory commits that needed it meanwhile: once the page file
-did not grow for 70 s while about 540 MiB drained (a pager got 4.1 of 8 GiB), and a
-pager that kept retrying was refused for 81 s, until the backlog had drained. With
-ordering off the same pressure grew it within seconds. Which request delays the
-growth is not identified.
+show it cannot happen.
+
+**Page-file growth waits for the write-out (diagnosed 2026-10-31, not fixed):** before
+Windows extends the page file, NTFS sends a volume request (control code 0x56C04C,
+volume function 19). It needs write access, so QueueCache treats it as possibly
+changing the disk: it first writes out everything unwritten while holding its single
+request worker, so other C: requests queue behind it, and then drops the clean read
+cache. Until that finishes the page file cannot grow, and Windows refuses memory
+requests that need it. With the 200 ms lab delay this lasted 42 to 67 s in the growth
+cuts, and about 5 min 17 s (until the page file grew) in a repeat without a reset;
+free commit stayed at 2 to 12 MiB,
+and a remote shell and a monitoring process failed meanwhile. Once it ended the page
+file grew in 1 GiB steps every 2 to 4 s. The one cut whose page file grew at once had
+no backlog left. Storage data-set requests other than a plain TRIM (control 0x2D9404)
+take the same path: 21 s in a cost window without the lab delay. Without the lab
+delay the hold lasts as long as writing out the backlog: well under a second in the
+measured steps, but minutes right after a flush-heavy burst (writing out 190,000
+groups took 8 min 22 s in R10). With ordering off the same request also waits, but the unordered
+write-out normally takes seconds; the ordering-off runs that grew the page file at
+once had no lab delay, so they were not a like-for-like comparison.
 
 
 - **Checks:** 14/14 targeted live-driver checks passed under Driver Verifier on

@@ -311,9 +311,12 @@ open, so the proven crash scope above remains NTFS data volumes. Hibernation, Fa
 Startup and physical power loss have not been qualified.
 A new paging-file range must wait until earlier saves reach the disk. A large queue
 of flush groups can therefore pause Windows during paging-file growth, even when
-the queued bytes fit in RAM. In the growth cuts, with the write-out slowed by a lab
-delay, Windows refused memory commits that needed a larger page file until the
-backlog had drained (81 s in one attempt). The C: pressure check bounds its writer
+the queued bytes fit in RAM. The growth itself waits too: the volume request NTFS
+sends before extending the page file is not recognized as read-only, so QueueCache
+first writes out everything unwritten and holds other C: requests meanwhile; Windows
+refuses memory requests that need the larger page file until then (up to 5 min with
+a lab-slowed write-out; [details](KNOWN_ISSUES.md#fast-mode-without-write-ordering-can-damage-the-file-system-in-a-crash)).
+The C: pressure check bounds its writer
 load; it does not establish responsiveness under a saturated flush backlog.
 
 Page-file data is not retained in the cache. With ordering on, a page-file write
