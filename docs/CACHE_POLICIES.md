@@ -358,6 +358,16 @@ and Windows' scheduled retrim returns the space. A lower TRIM that fails later i
 counted and does not fault the cache. Empty boundaries coalesce. A failed ordering flush faults the cache and
 retains its boundary for explicit Retry.
 
+An explicit QueueCache flush (`qcache policy flush`, the app's Flush) on an enabled
+ordered Fast cache seals the open group and, since plan 217, waits on an offload
+thread instead of the single request worker: it returns once the drain has written
+and flushed every group sealed before it, plus one more lower flush. Reads and
+writes keep being served meanwhile and join later groups, so the cache need not be
+empty when it returns. Holding the worker had stopped every C: request for 386 s
+behind a 190,000-group backlog. It still takes as long as that backlog. With
+ordering off, on a paused or faulted cache, or when four flushes are already
+waiting, it is the barrier as before; Pause and Remove always are.
+
 Plan 196 removed two earlier variants. The original mode 1 also sealed before every
 write-through. Mode 2 had today's groups but woke every drainer for each write and
 seal, and each searched the whole dirty list under the cache lock; that made
@@ -386,7 +396,9 @@ Diagnostics V26 appends the mode, current/draining group, seal and successful/fa
 ordering-flush counts, retained-version and TRIM-wait counts, and the highest group
 selected for a drain in this allocation. Diagnostics V29 (plan 216) appends queued
 TRIMs, their lower TRIMs sent and failed, queued ones dropped unsent, TRIMs completed
-without a lower TRIM, and those queued now. A lower group flush must be supported and
+without a lower TRIM, and those queued now. Diagnostics V30 (plan 217) appends explicit
+flushes that waited off the request worker, those that used the barrier because no
+offload entry was free, and those waiting now. A lower group flush must be supported and
 honoured by the complete storage stack. See [Microsoft's write-cache contract](https://learn.microsoft.com/en-us/windows-hardware/drivers/storage/querying-for-the-write-cache-property).
 The lower-I/O path continues to use ordinary writes and explicit group flushes.
 A read-only October 25 capability query reported write-through support on the VM's

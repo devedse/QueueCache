@@ -19,7 +19,7 @@ still to do. Open items link to their details.
 | Issue | Fixed | Build or status |
 |---|:-:|---|
 | [Fast mode without write ordering: a crash can damage the file system](#fast-mode-without-write-ordering-can-damage-the-file-system-in-a-crash) | ❌ | By design: write ordering stays off by default because programs that flush very often slow down. Qualified for NTFS data drives; C: qualification is tracked below. See the fixed #13 row |
-| [Write ordering on C:](https://github.com/devedse/QueueCache/issues/32) | ❌ | Qualification in progress. Bounded live correctness passed on 0.4.897.1, 0.4.900.1 and 0.4.906.1. The cost comparison found that a TRIM waiting behind a large save-point backlog held C: for 262 s; plan 216 completes it when queued, pending validation. Cost and C: reset qualification remain pending. Earlier coverage failures are retained. The app offers it only with a matching V28 driver. |
+| [Write ordering on C:](https://github.com/devedse/QueueCache/issues/32) | ❌ | Qualification in progress. Bounded live correctness passed on 0.4.897.1, 0.4.900.1, 0.4.906.1 and 0.4.907.1. The cost comparison found that a TRIM waiting behind a large save-point backlog held C: for 262 s (fixed in plan 216, validated), then that an explicit cache flush behind the same backlog held every C: request for 386 s; plan 217 lets that flush wait without holding other requests, pending validation. Cost and C: reset qualification remain pending. Earlier coverage failures are retained. The app offers it only with a matching V28 driver. |
 | [High-watermark pressure check stopped the plan-189 release campaign](#high-watermark-pressure-check-stopped-the-plan-189-release-campaign) | ❌ | Not reproduced, [#30](https://github.com/devedse/QueueCache/issues/30): two standalone runs and the complete plan-192 release campaign (11/11 phases, 106/106 cases, restored) passed it with exact counters; the original cause is unproven |
 | [The driver and installer are test-signed](#the-driver-is-test-signed) | ❌ | Production signing not done |
 | [Raw disk reads and writes bypass the cache](#raw-disk-reads-and-writes-bypass-the-cache-by-design) | ❌ | By design |
@@ -93,7 +93,9 @@ the same way also damaged NTFS when cut during its write-out.
 flush or a write-through write stay in RAM until
 everything before that point and a real lower flush have completed; old dirty
 versions are kept across those boundaries, and TRIM is ordered with them (since
-plan 216 a TRIM completes once queued instead of holding the file system). Since
+plan 216 a TRIM completes once queued instead of holding the file system, and since
+plan 217 an explicit cache flush waits for the save points before it without
+holding other requests). Since
 plan 196 there is one mode (the former lab mode 3); the original mode 1, which also
 sealed before each write-through, and mode 2, which woke every drain thread for each
 write, were removed. It is an advanced per-cache setting, off by default, in the
@@ -221,8 +223,35 @@ an ordered TRIM when it is queued, like a write; the drain sends its lower TRIM
 after every earlier group and that group's flush, so crash ordering is unchanged
 ([TRIM](#trim-no-longer-waits-for-unrelated-drain-writes)). The final off arm was
 not run; original settings were restored and 2,809 exported records verified.
-Native validation and a fresh complete cost window are required. Cost, C: cuts
-and release qualification remain pending.
+
+On 0.4.907.1 (plan 216) under Driver Verifier all 23 ordering checks passed,
+including a TRIM returning in 0.001 s while an earlier group's lower write was
+held, as did `trim-cache` (12/12) and the bounded C: pressure check (128 exact
+files, heartbeat maximum 0.307 s). In the fresh cost window (R9, Verifier off) the
+first off arm passed, and the ordering-on arm's measured steps were not slower
+(normal use 114.6 s against 120.3 s off; pressure heartbeat 1.443 s against
+1.364 s; no unidentified page-file write). After its flush-heavy step, which again
+left about 190,000 save points (1,967 MiB) in RAM, the arm's own
+`qcache policy flush C:` held the driver's single request worker for 428 s while
+the drain wrote them: up to 79 requests queued behind it and the heartbeat lost
+385.9 s. TRIMs no longer waited (all 152 queued TRIMs were sent; 309 completed
+without a lower TRIM because all 16 fence slots were in use). Plan 217: with
+ordering on, an explicit flush seals the open group and waits on an offload
+thread until the drain has written and flushed every group sealed before it, then
+flushes the disk once more; the request worker keeps serving reads and writes
+meanwhile, which land in later groups. The flush still takes as long as the
+backlog. With ordering off, or when no offload entry is free (four flushes at
+once), it remains a barrier. Diagnostics V30 count offloaded, fallback and waiting
+flushes. The final off arm was not run; original settings were restored and 3,232
+exported records verified. Native validation and a fresh complete cost window are
+required. Cost, C: cuts and release qualification remain pending.
+
+**Remaining limit (ordering on):** other full barriers still hold every request
+until the whole backlog is on the disk: a page-file write outside the learned safe
+ranges, a media-changing control, removal, shutdown. After a flush-heavy burst
+that backlog takes minutes at one lower flush per save point (300 to 700 per second
+in these windows). The cost windows record no such barrier after the burst, but they do not
+show it cannot happen.
 
 
 - **Checks:** 14/14 targeted live-driver checks passed under Driver Verifier on

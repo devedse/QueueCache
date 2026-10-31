@@ -193,6 +193,10 @@ struct QC_DIAGNOSTICS
     // no fence slot or memory was free, and those queued now (including one being sent).
     ULONGLONG OrderedTrimsQueued, OrderedTrimsSent, OrderedTrimFailures, OrderedTrimsDropped;
     ULONGLONG OrderedTrimsSkipped, OrderedTrimsPending;
+    // V30 (plan 217): ordered Fast explicit flushes that waited for their groups on an offload thread
+    // instead of holding the request worker, those that fell back to the barrier (no free offload entry
+    // or thread), and those waiting now.
+    ULONGLONG OrderedFlushesOffloaded, OrderedFlushFallbacks, OrderedFlushesPending;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -222,7 +226,9 @@ static constexpr ULONG QcDiagnosticsV25Size = 1208;
 static constexpr ULONG QcDiagnosticsV26Size = 1280;
 static constexpr ULONG QcDiagnosticsV27Size = 1312;
 static constexpr ULONG QcDiagnosticsV28Size = 1416;
-static_assert(sizeof(QC_DIAGNOSTICS) == 1464);
+static constexpr ULONG QcDiagnosticsV29Size = 1464;
+static_assert(sizeof(QC_DIAGNOSTICS) == 1488);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, OrderedFlushesOffloaded) == QcDiagnosticsV29Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, OrderedTrimsQueued) == QcDiagnosticsV28Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingOrderBypasses) == QcDiagnosticsV27Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, EpochWriteThroughGroups) == QcDiagnosticsV26Size);
@@ -439,8 +445,10 @@ struct QC_PAGING_READ
     BOOLEAN Started;
     BOOLEAN Write, WriteThrough;
     BOOLEAN Trim; // Asynchronous lower TRIM of TrimFences[Fence]; ignored by range waits.
+    BOOLEAN Flush; // Ordered explicit flush (plan 217): owns no range, so nothing waits for it.
     ULONG Fence;
     PUCHAR Source; // Write: the mapped caller buffer.
+    ULONGLONG FlushEpoch, FlushResets; // Flush: its first unsealed group, and EpochResets when it sealed.
 };
 struct QC_DRAIN_WORKER
 {
@@ -457,6 +465,8 @@ struct QC_DRAIN_WORKER
 // one disk read at a time, so this is the number of misses at the disk at once (3
 // before plan 125).
 static constexpr ULONG QcReadThreads = 16;
+// Explicit ordered flushes waiting at once on those threads (plan 217); more use the barrier.
+static constexpr ULONG QcOrderedFlushMax = 4;
 static constexpr ULONG QcCopyOffloadMinBytes = 256 * 1024;
 // Largest read miss copied through a driver-owned buffer and kept (StagedRead).
 static constexpr ULONG QcStagedReadMaxBytes = 16 * 1024 * 1024;
@@ -494,6 +504,10 @@ struct QC_CACHE
     // needs a lower flush; and whether the lower device reported write-through support.
     BOOLEAN EpochNeedsFlush, LowerWriteThrough;
     ULONG EpochWaiters;
+    // Mutex. Offloaded explicit flushes not yet completed (plan 217), and restarts of the group numbers
+    // at 1 (FreeSlots, mode change; only at a drained, disabled boundary or teardown).
+    ULONG OrderedFlushes;
+    ULONGLONG EpochResets;
     ULONGLONG CleanValidBytes[2];
     ULONGLONG ReadHitBytes, ReadMissBytes, Evictions, Generation, Instance, LastWriteTime;
     BOOLEAN Pressure, WriterWaiting;

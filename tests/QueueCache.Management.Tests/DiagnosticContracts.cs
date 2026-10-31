@@ -36,7 +36,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 216, "plan 216 requires ordered TRIMs to complete while an earlier group is held");
+        Check(VerificationPlan.Version == 217, "plan 217 requires an ordered explicit flush to leave later requests moving");
         var progressOptions = new VerificationOptions("W:", PagingReadProgressScenario.Suite, BudgetMiB: 256);
         VerificationPlan.Validate(progressOptions);
         Check(VerificationPlan.Integrity(progressOptions).Single().Id == "paging-read-progress-v215" &&
@@ -148,8 +148,7 @@ internal static class DiagnosticContracts
         }
         Trims(9, 6, 1, 1, 4, 2);
         Check(CacheDiagnostics.Decode(trimWire).OrderedTrims == new CacheOrderedTrims(9, 6, 1, 1, 4, 2) &&
-            CacheDiagnostics.CurrentWireSize == CacheDiagnostics.OrderedTrimWireSize,
-            "V29 ordered-TRIM field offsets");
+            CacheDiagnostics.Decode(trimWire).OrderedFlushes is null, "V29 ordered-TRIM field offsets; no ordered-flush counters");
         var trimOlder = trimWire[..CacheDiagnostics.PagingOrderWireSize];
         BinaryPrimitives.WriteUInt32LittleEndian(trimOlder, 28);
         BinaryPrimitives.WriteUInt32LittleEndian(trimOlder.AsSpan(4), (uint)trimOlder.Length);
@@ -159,6 +158,27 @@ internal static class DiagnosticContracts
         {
             Trims(queued, sent, failures, dropped, 0, pending);
             Reject(() => CacheDiagnostics.Decode(trimWire));
+        }
+        // V30 (plan 217) appends the offloaded explicit-flush counters.
+        Trims(9, 6, 1, 1, 4, 2);
+        var flushWire = new byte[CacheDiagnostics.OrderedFlushWireSize];
+        trimWire.CopyTo(flushWire, 0);
+        BinaryPrimitives.WriteUInt32LittleEndian(flushWire, 30);
+        BinaryPrimitives.WriteUInt32LittleEndian(flushWire.AsSpan(4), (uint)flushWire.Length);
+        void Flushes(ulong offloaded, ulong fallbacks, ulong pending)
+        {
+            BinaryPrimitives.WriteUInt64LittleEndian(flushWire.AsSpan(CacheDiagnostics.OrderedTrimWireSize), offloaded);
+            BinaryPrimitives.WriteUInt64LittleEndian(flushWire.AsSpan(CacheDiagnostics.OrderedTrimWireSize + 8), fallbacks);
+            BinaryPrimitives.WriteUInt64LittleEndian(flushWire.AsSpan(CacheDiagnostics.OrderedTrimWireSize + 16), pending);
+        }
+        Flushes(7, 2, 1);
+        Check(CacheDiagnostics.Decode(flushWire).OrderedFlushes == new CacheOrderedFlushes(7, 2, 1) &&
+            CacheDiagnostics.Decode(flushWire).OrderedTrims == new CacheOrderedTrims(9, 6, 1, 1, 4, 2) &&
+            CacheDiagnostics.CurrentWireSize == CacheDiagnostics.OrderedFlushWireSize, "V30 ordered-flush field offsets");
+        foreach (var (offloaded, pending) in new (ulong, ulong)[] { (0, 1), (9, 5) })
+        {
+            Flushes(offloaded, 0, pending);
+            Reject(() => CacheDiagnostics.Decode(flushWire));
         }
         var seedWire = SpecialRangeMap.Encode([new DiskRange(4096, 8192)], SpecialRangeKind.SafePaging);
         Check(BinaryPrimitives.ReadUInt32LittleEndian(seedWire.AsSpan(12)) == 3 && seedWire.Length == 40,
@@ -415,11 +435,11 @@ internal static class DiagnosticContracts
             drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
         Reject(() => TelemetryCoverage.Validate(completeDrain.Where((_, i) => i is < 60 or > 63).ToArray(),
             drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
-        Check(VerificationPlan.Integrity(new("Q:", "flush-order")).SequenceEqual([new IntegrityCase("flush-order-v216", "flush-order")]) &&
+        Check(VerificationPlan.Integrity(new("Q:", "flush-order")).SequenceEqual([new IntegrityCase("flush-order-v217", "flush-order")]) &&
             VerificationPlan.InjectsLabFaults("flush-order"), "ordering suite runs only its owned checks and records deliberate fault recovery");
         var orderCampaign = VerificationCampaignPlan.Create(new(new("Q:", "quick", Repeats: 1), "experiment", "W:", FocusSuite: "flush-order", PauseBackingCache: true));
         Check(orderCampaign.Count == 1 && orderCampaign[0].Role == CampaignTargetRole.NtfsLab &&
-            orderCampaign[0].ExpectedCases.SequenceEqual(["flush-order-v216"]), "ordering experiment pauses the backing cache and targets only the disposable lab role");
+            orderCampaign[0].ExpectedCases.SequenceEqual(["flush-order-v217"]), "ordering experiment pauses the backing cache and targets only the disposable lab role");
         var orderRecovery = new RecoverySnapshot(1, new DiskTarget('Q', 99990, 8L << 30, "fixture"),
             new(0, 0, 8UL << 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), false, "[]", DateTimeOffset.UnixEpoch, "fixture", FlushOrderMode: 0);
         Check(VerificationWorker.RestorationMismatches(orderRecovery, orderRecovery.State, orderRecovery.State, "[]", 0,
@@ -455,6 +475,31 @@ internal static class DiagnosticContracts
         foreach (var wrong in new[] { trimSent with { OrderedTrims = new(4, 4, 1, 0, 0, 0) }, trimSent with { OrderedTrims = new(4, 3, 0, 1, 0, 0) },
             trimSent with { OrderedTrims = new(5, 4, 0, 0, 0, 1) }, trimSent with { FlushOrder = trimQueued.FlushOrder } })
             Reject(() => FlushOrderScenario.ValidateTrimSent(trimQueued, wrong));
+        // Plan 217: the explicit flush waits off the request worker while the earlier group's write is held.
+        var flushBefore = orderBefore with { FlushOrder = new(1, 3, 2, 2, 1, 0, 0, 0, 2), OrderedFlushes = new(5, 1, 0),
+            LabGate = new(2, 1, 1, 2, 0, 0, 0, 0) };
+        var flushPending = flushBefore with { OrderedFlushes = new(6, 1, 1) };
+        var flushMoving = flushPending with { FlushOrder = flushPending.FlushOrder! with { VersionCopies = 0 } };
+        var flushFinished = flushPending with { FlushOrder = new(1, 3, 3, 2, 2, 0, 0, 0, 2), OrderedFlushes = new(6, 1, 0),
+            LabGate = new(3, 1, 1, 2, 3, 0, 0, 0) };
+        FlushOrderScenario.ValidateFlushOffloaded(flushBefore, flushPending, flushMoving, .004, flushWaiting: true);
+        FlushOrderScenario.ValidateFlushFinished(flushPending, flushFinished);
+        // The 0.4.907.1 shape: no V30 counters, and the later write returned only after the hold released.
+        Reject(() => FlushOrderScenario.ValidateFlushOffloaded(flushBefore with { OrderedFlushes = null },
+            flushPending with { OrderedFlushes = null }, flushMoving with { OrderedFlushes = null }, .004, flushWaiting: true));
+        Reject(() => FlushOrderScenario.ValidateFlushOffloaded(flushBefore, flushPending, flushFinished, 4.1, flushWaiting: false));
+        foreach (var (seconds, waiting) in new[] { (double.NaN, true), (-1, true), (1.01, true), (.004, false) })
+            Reject(() => FlushOrderScenario.ValidateFlushOffloaded(flushBefore, flushPending, flushMoving, seconds, waiting));
+        foreach (var wrong in new[] { flushPending with { OrderedFlushes = new(6, 2, 1) }, flushPending with { OrderedFlushes = new(5, 1, 1) },
+            flushPending with { OrderedFlushes = new(6, 1, 0) }, flushPending with { FlushOrder = flushPending.FlushOrder! with { DrainingEpoch = 3 } },
+            flushPending with { FlushOrder = flushPending.FlushOrder! with { Mode = 2 } } })
+            Reject(() => FlushOrderScenario.ValidateFlushOffloaded(flushBefore, wrong, flushMoving, .004, flushWaiting: true));
+        Reject(() => FlushOrderScenario.ValidateFlushOffloaded(flushBefore, flushPending, flushMoving with { LabGate = flushFinished.LabGate }, .004, flushWaiting: true));
+        foreach (var wrong in new[] { flushFinished with { OrderedFlushes = new(6, 1, 1) }, flushFinished with { OrderedFlushes = new(7, 1, 0) },
+            flushFinished with { OrderedFlushes = new(6, 2, 0) }, flushFinished with { FlushOrder = flushFinished.FlushOrder! with { Flushes = 1 } },
+            flushFinished with { FlushOrder = flushFinished.FlushOrder! with { DrainingEpoch = 2 } },
+            flushFinished with { FlushOrder = flushFinished.FlushOrder! with { FlushFailures = 1 } } })
+            Reject(() => FlushOrderScenario.ValidateFlushFinished(flushPending, wrong));
         Reject(() => FlushOrderScenario.ValidateRamAdmission(orderBefore, orderAfter with { FlushOrder = null }));
         Reject(() => FlushOrderScenario.ValidateRamAdmission(orderBefore, orderAfter with
             { Attribution = orderAfter.Attribution! with { LowerFlushAttempts = 1 } }));
@@ -482,6 +527,21 @@ internal static class DiagnosticContracts
         Reject(() => DurabilityCheckpointEvidence.NeedsAnotherFlush(checkpointBefore, checkpointNewWrite with { LastError = -1 }));
         Reject(() => DurabilityCheckpointEvidence.NeedsAnotherFlush(checkpointBefore, checkpointNewWrite with { Instance = 10 }));
         Reject(() => DurabilityCheckpointEvidence.NeedsAnotherFlush(checkpointBefore, checkpointNewWrite with { AcceptedBytes = 1 }));
+        // Plan 217: ordered Fast completes once the frontier reaches the group that was open before the flush,
+        // even though writes admitted meanwhile are still in RAM; every other shape keeps the bounded retry.
+        var fastBefore = checkpointBefore with { Flags = checkpointBefore.Flags | 32 };
+        var fastAfter = checkpointNewWrite with { Flags = checkpointNewWrite.Flags | 32 };
+        var epochBefore = new CacheFlushOrder(1, 40, 12, 39, 11, 0, 0, 0, 12);
+        var epochAfter = epochBefore with { CurrentEpoch = 41, DrainingEpoch = 40, Seals = 40, Flushes = 39 };
+        Check(!DurabilityCheckpointEvidence.NeedsAnotherFlush(fastBefore, fastAfter, epochBefore, epochAfter) &&
+            DurabilityCheckpointEvidence.NeedsAnotherFlush(fastBefore, fastAfter, epochBefore, epochAfter with { DrainingEpoch = 39 }) &&
+            DurabilityCheckpointEvidence.NeedsAnotherFlush(checkpointBefore, checkpointNewWrite, epochBefore, epochAfter) &&
+            DurabilityCheckpointEvidence.NeedsAnotherFlush(fastBefore, fastAfter, epochBefore with { Mode = 0 }, epochAfter with { Mode = 0 }) &&
+            DurabilityCheckpointEvidence.NeedsAnotherFlush(fastBefore, fastAfter, epochBefore, epochAfter with { Mode = 2 }) &&
+            DurabilityCheckpointEvidence.NeedsAnotherFlush(fastBefore, fastAfter, epochBefore, null) &&
+            DurabilityCheckpointEvidence.NeedsAnotherFlush(fastBefore, fastAfter),
+            "An ordered flush whose frontier passed every group sealed before it completes the checkpoint on a busy volume");
+        Reject(() => DurabilityCheckpointEvidence.NeedsAnotherFlush(fastBefore, fastAfter with { Instance = 10 }, epochBefore, epochAfter));
         var checkpointDirectory = Directory.CreateTempSubdirectory("QueueCache-checkpoint-contract-").FullName;
         try
         {

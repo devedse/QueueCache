@@ -41,7 +41,8 @@ public static class DurableCheckpoint
                 attempts.Add(observed);
                 if (observed.DiagnosticsAfter.ControlBarriers <= observed.DiagnosticsBefore.ControlBarriers)
                     throw new InvalidDataException("No completed control barrier was recorded.");
-                if (!DurabilityCheckpointEvidence.NeedsAnotherFlush(observed.Before, observed.After))
+                if (!DurabilityCheckpointEvidence.NeedsAnotherFlush(observed.Before, observed.After,
+                        observed.DiagnosticsBefore.FlushOrder, observed.DiagnosticsAfter.FlushOrder))
                     return new(start, DateTimeOffset.UtcNow, attempts);
             }
             throw new InvalidDataException("New writes kept arriving across three flushes; the VM is not cut-ready.");

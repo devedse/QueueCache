@@ -6,12 +6,20 @@ namespace QueueCache.Developer.Verification;
 public static class DurabilityCheckpointEvidence
 {
     public const int MaximumFlushAttempts = 3;
-    public static bool NeedsAnotherFlush(WriteCacheState before, WriteCacheState after)
+    /// <summary>With ordering on (plan 217) the explicit flush returns once every group sealed before it is on the
+    /// disk, while writes admitted meanwhile stay in RAM. The filesystem flush before the call sealed everything this
+    /// checkpoint protects, so the frontier reaching the group that was open at the start completes the boundary
+    /// on a volume that keeps writing (C:).</summary>
+    public static bool NeedsAnotherFlush(WriteCacheState before, WriteCacheState after,
+        CacheFlushOrder? orderBefore = null, CacheFlushOrder? orderAfter = null)
     {
         if (before.LastError != 0 || after.LastError != 0 || after.Errors != before.Errors ||
             after.Instance != before.Instance || after.AcceptedBytes < before.AcceptedBytes)
             throw new InvalidDataException("Checkpoint health or identity changed; no retry is permitted.");
         if (after.DirtyBytes == 0 && after.InFlightBytes == 0) return false;
+        if (before.UnsafeDefer && after.UnsafeDefer && orderBefore is { Mode: not 0 } a && orderAfter is { } b &&
+            b.Mode == a.Mode && b.DrainingEpoch >= a.CurrentEpoch)
+            return false;
         if (after.AcceptedBytes == before.AcceptedBytes)
             throw new InvalidDataException("Flush left pending work without new write admission; the boundary is not complete.");
         return true;

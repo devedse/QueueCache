@@ -77,9 +77,10 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public const int FlushOrderWireSize = 1280;
     public const int WriteThroughGroupsWireSize = 1312;
     public const int PagingOrderWireSize = 1416;
-    /// <summary>The newest version: the buffer callers offer, so the driver returns every known field.</summary>
     public const int OrderedTrimWireSize = 1464;
-    public const int CurrentWireSize = OrderedTrimWireSize;
+    /// <summary>The newest version: the buffer callers offer, so the driver returns every known field.</summary>
+    public const int OrderedFlushWireSize = 1488;
+    public const int CurrentWireSize = OrderedFlushWireSize;
     public CacheAttribution? Attribution { get; init; }
     public CacheUsagePaths? UsagePaths { get; init; }
     public CacheUsageActivities? UsageActivity { get; init; }
@@ -134,6 +135,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public CachePagingOrder? PagingOrder { get; init; }
     /// <summary>V29 (plan 216): ordered Fast TRIMs completed when queued and their later lower TRIMs.</summary>
     public CacheOrderedTrims? OrderedTrims { get; init; }
+    /// <summary>V30 (plan 217): ordered Fast explicit flushes that waited off the request worker.</summary>
+    public CacheOrderedFlushes? OrderedFlushes { get; init; }
     public static CacheDiagnostics Decode(ReadOnlySpan<byte> bytes)
     {
         var expectedVersion = bytes.Length switch
@@ -167,6 +170,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             WriteThroughGroupsWireSize => 27u,
             PagingOrderWireSize => 28u,
             OrderedTrimWireSize => 29u,
+            OrderedFlushWireSize => 30u,
             _ => 0u
         };
         if (expectedVersion == 0 || BinaryPrimitives.ReadUInt32LittleEndian(bytes) != expectedVersion ||
@@ -395,6 +399,16 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
                 orderedTrims.Pending > orderedTrims.Queued)
                 throw new InvalidDataException("Inconsistent ordered TRIM counters.");
         }
+        CacheOrderedFlushes? orderedFlushes = null;
+        if (bytes.Length >= OrderedFlushWireSize)
+        {
+            orderedFlushes = new(BinaryPrimitives.ReadUInt64LittleEndian(bytes[OrderedTrimWireSize..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(OrderedTrimWireSize + 8)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(OrderedTrimWireSize + 16)..]));
+            // At most QcOrderedFlushMax wait at once, each counted when it was offloaded.
+            if (orderedFlushes.Pending > orderedFlushes.Offloaded || orderedFlushes.Pending > 4)
+                throw new InvalidDataException("Inconsistent ordered flush counters.");
+        }
         if (writeThroughGroups is { Available: > 1 })
             throw new InvalidDataException("Invalid write-through availability.");
         if (flushOrder is { Mode: > 2 } || flushOrder is { CurrentEpoch: 0 } or { DrainingEpoch: 0 } ||
@@ -432,7 +446,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             FlushOrder = flushOrder,
             WriteThroughGroups = writeThroughGroups,
             PagingOrder = pagingOrder,
-            OrderedTrims = orderedTrims
+            OrderedTrims = orderedTrims,
+            OrderedFlushes = orderedFlushes
         };
     }
 }
@@ -516,6 +531,10 @@ public sealed record CacheCallerPath(ulong Reads, ulong Writes, ulong Declined);
 /// ones never sent because no request could be built at their turn; TRIMs completed without any lower TRIM because no
 /// fence slot or memory was free; and those queued now, including one being sent. Lifetime counts except Pending.</summary>
 public sealed record CacheOrderedTrims(ulong Queued, ulong Sent, ulong Failures, ulong Dropped, ulong Skipped, ulong Pending);
+/// <summary>V30 (plan 217), ordered Fast only: explicit flushes that waited for the groups sealed before them on an
+/// offload thread, leaving the request worker free; those that used the barrier because no offload entry was free; and
+/// those waiting now. Lifetime counts except Pending.</summary>
+public sealed record CacheOrderedFlushes(ulong Offloaded, ulong Fallbacks, ulong Pending);
 /// <summary>V28. Presence is the loaded driver's system-volume ordering capability. Last clear reason:
 /// 0 none, 1 enable, 2 disable, 3 allocation, 4 mode, 5 usage, 6 removal, 7 cached write,
 /// 8 other direct write, 9 TRIM, 10 seed replacement. Classification counters count writes only.</summary>

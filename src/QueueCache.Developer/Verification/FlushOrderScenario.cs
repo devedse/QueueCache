@@ -12,7 +12,7 @@ namespace QueueCache.Developer.Verification;
 public static class FlushOrderScenario
 {
     private const int Block = 4096, MiB = 1 << 20, Offset = 4 * MiB;
-    public const int CheckCount = 15 + PagingOrderScenario.CheckCount, WriteThroughCheckCount = 11;
+    public const int CheckCount = 16 + PagingOrderScenario.CheckCount, WriteThroughCheckCount = 11;
     public const ulong On = 1, WriteThrough = 2;
 
     /// <summary>Mode 1 runs every check, including the per-cache setting. Lab mode 2 (#31) runs the driver
@@ -98,6 +98,39 @@ public static class FlushOrderScenario
         if (b.Sent != a.Sent + 1 || b.Pending != 0 || b.Failures != a.Failures || b.Dropped != a.Dropped ||
             b.Sent + b.Dropped + b.Pending != b.Queued || ob.Flushes <= oa.Flushes)
             throw new InvalidDataException("The explicit flush did not send the queued lower TRIM after its predecessors.");
+    }
+
+    private static CacheOrderedFlushes Flushes(CacheDiagnostics d) =>
+        d.OrderedFlushes ?? throw new InvalidDataException("Missing V30 ordered-flush evidence.");
+
+    /// <summary>Plan 217: an explicit ordered flush waits for its groups on an offload thread, not on the request
+    /// worker. While an earlier group's lower write was still held and the flush still waited, a later write and
+    /// read completed (before plan 217 they queued behind the flush until the hold released).</summary>
+    public static void ValidateFlushOffloaded(CacheDiagnostics before, CacheDiagnostics pending, CacheDiagnostics moving,
+        double seconds, bool flushWaiting)
+    {
+        if (!double.IsFinite(seconds) || seconds < 0 || seconds > 1 || !flushWaiting ||
+            moving.LabGate is not { State: 2, OldLowerDoneSeq: > 0, OldRetireSeq: 0 })
+            throw new InvalidDataException("A later write and read did not complete within a second while the flush waited for a held group.");
+        var a = Flushes(before);
+        var b = Flushes(pending);
+        var m = Flushes(moving);
+        var order = pending.FlushOrder ?? throw new InvalidDataException("Missing pending-flush ordering evidence.");
+        if (order.Mode != On || b.Offloaded != a.Offloaded + 1 || b.Fallbacks != a.Fallbacks || b.Pending != 1 ||
+            m.Offloaded != b.Offloaded || m.Fallbacks != b.Fallbacks || m.Pending != 1 || order.DrainingEpoch >= order.CurrentEpoch)
+            throw new InvalidDataException("The explicit flush did not wait off the request worker for its earlier group.");
+    }
+
+    /// <summary>The offloaded flush finished after its earlier group's lower flush, with none left waiting.</summary>
+    public static void ValidateFlushFinished(CacheDiagnostics pending, CacheDiagnostics after)
+    {
+        var b = Flushes(pending);
+        var c = Flushes(after);
+        var o = pending.FlushOrder ?? throw new InvalidDataException("Missing pending-flush ordering evidence.");
+        var p = after.FlushOrder ?? throw new InvalidDataException("Missing post-flush ordering evidence.");
+        if (c.Pending != 0 || c.Offloaded != b.Offloaded || c.Fallbacks != b.Fallbacks || p.Flushes <= o.Flushes ||
+            p.FlushFailures != o.FlushFailures || p.DrainingEpoch < o.CurrentEpoch)
+            throw new InvalidDataException("The offloaded flush did not finish after its earlier group's lower flush.");
     }
 
     public static void ValidateFailed(CacheDiagnostics before, CacheDiagnostics after, WriteCacheState state, bool flushFailed, ulong mode = On)
@@ -261,6 +294,7 @@ public static class FlushOrderScenario
             if (mode == On)
             {
                 checks.Add(await CheckTrimWhileGroupHeld(target, device, path, evidence));
+                checks.Add(await CheckFlushLeavesRequestsMoving(target, device, path, evidence));
                 Apply(target, device, mode);
                 device.Control(WriteCacheAction.LabTrimMode, value: 3);
                 using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
@@ -590,6 +624,83 @@ public static class FlushOrderScenario
         }
         return new("flush-order/trim-completes-while-group-held", "PASS",
             $"With an earlier group's lower write held, a TRIM of another block completed in {seconds:F3}s with its lower TRIM queued and unsent; the explicit flush then sent it. The held write, the trimmed block's rewrite and an untouched neighbor matched after release.");
+    }
+    // Plan 217 (R9: an explicit flush behind a 190,000-group backlog held the request worker, so every later C:
+    // request waited 386 s). Eager drain starts the sealed group's lower write at once and the gate holds its
+    // completion; the explicit flush must wait for that group off the worker, so a later write and read of another
+    // block complete meanwhile.
+    private static async Task<CheckResult> CheckFlushLeavesRequestsMoving(DiskTarget target, CacheDevice device, string path, string evidence)
+    {
+        const long laterOffset = Offset + 3 * Block;
+        Reset(device);
+        device.Control(WriteCacheAction.FlushOrder, value: On);
+        ConfigurationManager.Apply(target, new CacheConfiguration(64, CachePreset.Fast)
+        {
+            Options = new CacheOptions(Drain: DrainAlgorithm.Eager, BatchKiB: 4, Parallelism: 2, RetainWrites: false)
+        }, true);
+        double seconds;
+        using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
+        {
+            var diskOffset = PagingCoherenceScenarios.DiskOffsetOf(path, Offset, target.Root);
+            device.Control(WriteCacheAction.LabGate, (ulong)diskOffset, 4000UL << 32 | Block);
+            Task? flush = null;
+            try
+            {
+                file.Write(Offset, Pattern(18));
+                file.Flush(); // Seals the held group from volatile RAM.
+                var waiting = System.Diagnostics.Stopwatch.StartNew();
+                while (device.GetDiagnostics().LabGate is not { State: 2, OldLowerDoneSeq: > 0 })
+                {
+                    if (waiting.Elapsed.TotalSeconds > 3)
+                        throw new IOException("The sealed group's lower write did not reach the gate hold.");
+                    await Task.Delay(10);
+                }
+                var before = device.GetDiagnostics();
+                // A synchronous Windows file handle serializes its IOCTLs: the waiting flush gets its own.
+                flush = Task.Run(() =>
+                {
+                    using var control = new CacheDevice(target.Device, writable: true);
+                    control.Control(WriteCacheAction.Flush);
+                });
+                CacheDiagnostics pending;
+                waiting.Restart();
+                while ((pending = device.GetDiagnostics()).OrderedFlushes is not { Pending: 1 })
+                {
+                    if (flush.IsCompleted || waiting.Elapsed.TotalSeconds > 1)
+                        throw new IOException("The explicit flush did not wait off the request worker.");
+                    await Task.Delay(10);
+                }
+                var clock = System.Diagnostics.Stopwatch.StartNew();
+                file.Write(laterOffset, Pattern(19));
+                AssertRead(file, laterOffset, Pattern(19));
+                seconds = clock.Elapsed.TotalSeconds;
+                var moving = device.GetDiagnostics();
+                var flushWaiting = !flush.IsCompleted;
+                RunStorage.AtomicJson(evidence + ".flush-moving-before.json", before);
+                RunStorage.AtomicJson(evidence + ".flush-moving-pending.json", pending);
+                RunStorage.AtomicJson(evidence + ".flush-moving-later.json", new { Diagnostics = moving, Seconds = seconds, FlushWaiting = flushWaiting });
+                ValidateFlushOffloaded(before, pending, moving, seconds, flushWaiting);
+                await flush;
+                var after = device.GetDiagnostics();
+                RunStorage.AtomicJson(evidence + ".flush-moving-after.json", after);
+                ValidateFlushFinished(pending, after);
+            }
+            finally
+            {
+                device.Control(WriteCacheAction.LabGate, value: 0);
+                // Join the owned flush before restoration; a failure already surfaced above.
+                if (flush is not null) await Task.WhenAny(flush);
+            }
+        }
+        Reset(device);
+        using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
+        {
+            AssertRead(file, Offset, Pattern(18));
+            AssertRead(file, laterOffset, Pattern(19));
+            AssertRead(file, Offset + Block, Pattern(3));
+        }
+        return new("flush-order/flush-leaves-requests-moving", "PASS",
+            $"With an earlier group's lower write held, the explicit flush waited off the request worker; a later write and read of another block completed in {seconds:F3}s meanwhile. The flush finished after that group's lower flush; the held write, the later write and an untouched neighbor matched after release.");
     }
     private static void Reset(CacheDevice device)
     {
