@@ -197,6 +197,13 @@ struct QC_DIAGNOSTICS
     // instead of holding the request worker, those that fell back to the barrier (no free offload entry
     // or thread), and those waiting now.
     ULONGLONG OrderedFlushesOffloaded, OrderedFlushFallbacks, OrderedFlushesPending;
+    // V31 (plan 219): controls recognised as changing no stored data and forwarded without draining (Windows'
+    // page-file preparation, data-set notifications); the data-set action of the control behind the last other
+    // barrier (0: not a data-set request); first writes into a page-file range not yet known safe that waited for
+    // their earlier groups in the offload table instead of on the request worker, those that used the barrier
+    // instead (paused or faulted cache, no free entry), and those waiting now.
+    ULONGLONG CriticalIoPreparations, DataSetNotifications, LastBarrierAction;
+    ULONGLONG PagingLearnOffloaded, PagingLearnFallbacks, PagingLearnPending;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -227,7 +234,9 @@ static constexpr ULONG QcDiagnosticsV26Size = 1280;
 static constexpr ULONG QcDiagnosticsV27Size = 1312;
 static constexpr ULONG QcDiagnosticsV28Size = 1416;
 static constexpr ULONG QcDiagnosticsV29Size = 1464;
-static_assert(sizeof(QC_DIAGNOSTICS) == 1488);
+static constexpr ULONG QcDiagnosticsV30Size = 1488;
+static_assert(sizeof(QC_DIAGNOSTICS) == 1536);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, CriticalIoPreparations) == QcDiagnosticsV30Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, OrderedFlushesOffloaded) == QcDiagnosticsV29Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, OrderedTrimsQueued) == QcDiagnosticsV28Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingOrderBypasses) == QcDiagnosticsV27Size);
@@ -446,9 +455,15 @@ struct QC_PAGING_READ
     BOOLEAN Write, WriteThrough;
     BOOLEAN Trim; // Asynchronous lower TRIM of TrimFences[Fence]; ignored by range waits.
     BOOLEAN Flush; // Ordered explicit flush (plan 217): owns no range, so nothing waits for it.
+    // First write into a page-file range not yet known safe (plan 219, also Write): it waits in the table, without a
+    // thread, until every group sealed before it is on the disk. Its range keeps overlapping requests out; it pins
+    // nothing, so TRIMs and QueueCache's own controls do not wait for it.
+    BOOLEAN Learn;
     ULONG Fence;
     PUCHAR Source; // Write: the mapped caller buffer.
-    ULONGLONG FlushEpoch, FlushResets; // Flush: its first unsealed group, and EpochResets when it sealed.
+    // Flush and Learn: the first unsealed group, and EpochResets when it sealed.
+    ULONGLONG FlushEpoch, FlushResets;
+    ULONGLONG LearnClears; // Learn: SafeRangeClears when it sealed; any later clear means it is not learned.
 };
 struct QC_DRAIN_WORKER
 {
@@ -467,6 +482,9 @@ struct QC_DRAIN_WORKER
 static constexpr ULONG QcReadThreads = 16;
 // Explicit ordered flushes waiting at once on those threads (plan 217); more use the barrier.
 static constexpr ULONG QcOrderedFlushMax = 4;
+// Page-file learners waiting at once in the table (plan 219); they hold no thread while waiting, and the
+// rest of the table stays free for reads. More use the barrier.
+static constexpr ULONG QcPagingLearnMax = 32;
 static constexpr ULONG QcCopyOffloadMinBytes = 256 * 1024;
 // Largest read miss copied through a driver-owned buffer and kept (StagedRead).
 static constexpr ULONG QcStagedReadMaxBytes = 16 * 1024 * 1024;
@@ -507,6 +525,7 @@ struct QC_CACHE
     // Mutex. Offloaded explicit flushes not yet completed (plan 217), and restarts of the group numbers
     // at 1 (FreeSlots, mode change; only at a drained, disabled boundary or teardown).
     ULONG OrderedFlushes;
+    ULONG PagingLearners; // Mutex: offloaded page-file learners not yet completed (plan 219).
     ULONGLONG EpochResets;
     ULONGLONG CleanValidBytes[2];
     ULONGLONG ReadHitBytes, ReadMissBytes, Evictions, Generation, Instance, LastWriteTime;

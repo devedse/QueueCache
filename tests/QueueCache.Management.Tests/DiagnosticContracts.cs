@@ -36,7 +36,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 218, "plan 218 accepts a later TRIM still queued after an explicit flush that no longer holds requests");
+        Check(VerificationPlan.Version == 219, "plan 219 adds page-file preparation and offloaded page-file learner checks to flush-order");
         var progressOptions = new VerificationOptions("W:", PagingReadProgressScenario.Suite, BudgetMiB: 256);
         VerificationPlan.Validate(progressOptions);
         Check(VerificationPlan.Integrity(progressOptions).Single().Id == "paging-read-progress-v215" &&
@@ -199,11 +199,35 @@ internal static class DiagnosticContracts
         Flushes(7, 2, 1);
         Check(CacheDiagnostics.Decode(flushWire).OrderedFlushes == new CacheOrderedFlushes(7, 2, 1) &&
             CacheDiagnostics.Decode(flushWire).OrderedTrims == new CacheOrderedTrims(9, 6, 1, 1, 4, 2) &&
-            CacheDiagnostics.CurrentWireSize == CacheDiagnostics.OrderedFlushWireSize, "V30 ordered-flush field offsets");
+            CacheDiagnostics.Decode(flushWire).PageFileGrowth is null, "V30 ordered-flush field offsets; no page-file growth counters");
         foreach (var (offloaded, pending) in new (ulong, ulong)[] { (0, 1), (9, 5) })
         {
             Flushes(offloaded, 0, pending);
             Reject(() => CacheDiagnostics.Decode(flushWire));
+        }
+        // V31 (plan 219) appends the forwarded page-file preparation/notification counters, the last barrier's
+        // data-set action and the offloaded page-file learners.
+        Flushes(7, 2, 1);
+        var growthWire = new byte[CacheDiagnostics.PageFileGrowthWireSize];
+        flushWire.CopyTo(growthWire, 0);
+        BinaryPrimitives.WriteUInt32LittleEndian(growthWire, 31);
+        BinaryPrimitives.WriteUInt32LittleEndian(growthWire.AsSpan(4), (uint)growthWire.Length);
+        void Growth(params ulong[] values)
+        {
+            for (var i = 0; i < values.Length; ++i)
+                BinaryPrimitives.WriteUInt64LittleEndian(growthWire.AsSpan(CacheDiagnostics.OrderedFlushWireSize + 8 * i), values[i]);
+        }
+        Growth(3, 4, 0x80000005, 6, 1, 2);
+        Check(CacheDiagnostics.Decode(growthWire).PageFileGrowth == new CachePageFileGrowth(3, 4, 0x80000005, 6, 1, 2) &&
+            CacheDiagnostics.Decode(growthWire).OrderedFlushes == new CacheOrderedFlushes(7, 2, 1) &&
+            CacheDiagnostics.CurrentWireSize == CacheDiagnostics.PageFileGrowthWireSize, "V31 page-file growth field offsets");
+        var growthVersion = (byte[])growthWire.Clone();
+        BinaryPrimitives.WriteUInt32LittleEndian(growthVersion, 30);
+        Reject(() => CacheDiagnostics.Decode(growthVersion));
+        foreach (var (action, offloaded, pending) in new (ulong, ulong, ulong)[] { (0, 0, 1), (0, 40, 33), (1UL << 32, 6, 2) })
+        {
+            Growth(3, 4, action, offloaded, 1, pending);
+            Reject(() => CacheDiagnostics.Decode(growthWire));
         }
         var seedWire = SpecialRangeMap.Encode([new DiskRange(4096, 8192)], SpecialRangeKind.SafePaging);
         Check(BinaryPrimitives.ReadUInt32LittleEndian(seedWire.AsSpan(12)) == 3 && seedWire.Length == 40,
@@ -228,6 +252,36 @@ internal static class DiagnosticContracts
         PagingOrderScenario.ValidateLearn(pagingBefore, learning, true);
         Reject(() => PagingOrderScenario.ValidateLearn(pagingBefore, learning with
             { LabGate = learning.LabGate! with { DirectSubmitSeq = 11 } }, true));
+        // Plan 219: a new page-file range waits for the held group off the request worker; a later write and read move.
+        var learnBefore = pagingBefore with { FlushOrder = new(1, 3, 2, 2, 1, 0, 0, 0, 2), PageFileGrowth = new(0, 0, 0, 4, 1, 0),
+            LabGate = new(2, 1, 10, 11, 0, 0, 0, 0) };
+        var learnPending = learnBefore with { PagingOrder = learnBefore.PagingOrder! with { LearnBarriers = 1 },
+            PageFileGrowth = new(0, 0, 0, 5, 1, 1) };
+        var learnMoving = learnPending with { FlushOrder = learnPending.FlushOrder! with { VersionCopies = 1 } };
+        var learnFinished = learnPending with { FlushOrder = new(1, 4, 4, 3, 2, 1, 0, 0, 3), PageFileGrowth = new(0, 0, 0, 5, 1, 0),
+            LabGate = new(3, 1, 10, 11, 12, 0, 13, 14) };
+        PagingOrderScenario.ValidateLearnOffloaded(learnBefore, learnPending, learnMoving, .003, learnWaiting: true);
+        PagingOrderScenario.ValidateLearnFinished(learnPending, learnFinished);
+        // The 0.4.912.1 shape: no V31 counters; the worker's barrier held the later write until the gate released.
+        Reject(() => PagingOrderScenario.ValidateLearnOffloaded(learnBefore with { PageFileGrowth = null },
+            learnPending with { PageFileGrowth = null }, learnMoving with { PageFileGrowth = null }, .003, learnWaiting: true));
+        foreach (var (seconds, waiting) in new[] { (double.NaN, true), (-1, true), (1.01, true), (.003, false) })
+            Reject(() => PagingOrderScenario.ValidateLearnOffloaded(learnBefore, learnPending, learnMoving, seconds, waiting));
+        foreach (var wrong in new[] { learnPending with { PageFileGrowth = new(0, 0, 0, 5, 2, 1) },
+            learnPending with { PageFileGrowth = new(0, 0, 0, 4, 1, 1) }, learnPending with { PageFileGrowth = new(0, 0, 0, 5, 1, 0) },
+            learnPending with { PagingOrder = learnPending.PagingOrder! with { LearnBarriers = 0 } },
+            learnPending with { PagingOrder = learnPending.PagingOrder! with { Bypasses = 1 } },
+            learnPending with { FlushOrder = learnPending.FlushOrder! with { DrainingEpoch = 3 } } })
+            Reject(() => PagingOrderScenario.ValidateLearnOffloaded(learnBefore, wrong, learnMoving, .003, learnWaiting: true));
+        foreach (var gate in new CacheLabGate[] { new(3, 1, 10, 11, 12, 0, 13, 14), new(2, 1, 10, 11, 0, 0, 12, 13) })
+            Reject(() => PagingOrderScenario.ValidateLearnOffloaded(learnBefore, learnPending, learnMoving with { LabGate = gate }, .003, learnWaiting: true));
+        foreach (var wrong in new[] { learnFinished with { PageFileGrowth = new(0, 0, 0, 5, 1, 1) },
+            learnFinished with { PageFileGrowth = new(0, 0, 0, 5, 2, 0) },
+            learnFinished with { PagingOrder = learnFinished.PagingOrder! with { SafeRanges = 0 } },
+            learnFinished with { PagingOrder = learnFinished.PagingOrder! with { OverlapFound = 1 } },
+            learnFinished with { LabGate = learnFinished.LabGate! with { DirectSubmitSeq = 11 } },
+            learnFinished with { FlushOrder = learnFinished.FlushOrder! with { Flushes = 1 } } })
+            Reject(() => PagingOrderScenario.ValidateLearnFinished(learnPending, wrong));
         var clearing = pagingBefore with { PagingOrder = pagingBefore.PagingOrder with
             { Clears = 1, SafeRanges = 0, LastClearReason = 7 } };
         PagingOrderScenario.ValidateClear(pagingBefore, clearing, 7);
@@ -486,11 +540,11 @@ internal static class DiagnosticContracts
             drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
         Reject(() => TelemetryCoverage.Validate(completeDrain.Where((_, i) => i is < 60 or > 63).ToArray(),
             drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
-        Check(VerificationPlan.Integrity(new("Q:", "flush-order")).SequenceEqual([new IntegrityCase("flush-order-v218", "flush-order")]) &&
+        Check(VerificationPlan.Integrity(new("Q:", "flush-order")).SequenceEqual([new IntegrityCase("flush-order-v219", "flush-order")]) &&
             VerificationPlan.InjectsLabFaults("flush-order"), "ordering suite runs only its owned checks and records deliberate fault recovery");
         var orderCampaign = VerificationCampaignPlan.Create(new(new("Q:", "quick", Repeats: 1), "experiment", "W:", FocusSuite: "flush-order", PauseBackingCache: true));
         Check(orderCampaign.Count == 1 && orderCampaign[0].Role == CampaignTargetRole.NtfsLab &&
-            orderCampaign[0].ExpectedCases.SequenceEqual(["flush-order-v218"]), "ordering experiment pauses the backing cache and targets only the disposable lab role");
+            orderCampaign[0].ExpectedCases.SequenceEqual(["flush-order-v219"]), "ordering experiment pauses the backing cache and targets only the disposable lab role");
         var orderRecovery = new RecoverySnapshot(1, new DiskTarget('Q', 99990, 8L << 30, "fixture"),
             new(0, 0, 8UL << 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), false, "[]", DateTimeOffset.UnixEpoch, "fixture", FlushOrderMode: 0);
         Check(VerificationWorker.RestorationMismatches(orderRecovery, orderRecovery.State, orderRecovery.State, "[]", 0,
@@ -555,6 +609,41 @@ internal static class DiagnosticContracts
             flushFinished with { FlushOrder = flushFinished.FlushOrder! with { DrainingEpoch = 2 } },
             flushFinished with { FlushOrder = flushFinished.FlushOrder! with { FlushFailures = 1 } } })
             Reject(() => FlushOrderScenario.ValidateFlushFinished(flushPending, wrong));
+        // Plan 219: page-file preparation and a data-set notification pass a held group without a barrier; an allocation
+        // query still waits behind one that records its action.
+        var prepareBefore = flushBefore with { PageFileGrowth = new(2, 3, 0, 0, 0, 0) };
+        var prepareForwarded = prepareBefore with { PageFileGrowth = new(3, 4, 0, 0, 0, 0) };
+        var queryWaiting = prepareForwarded with { OtherBarriers = prepareForwarded.OtherBarriers + 1, LastBarrierCode = 0x2D9404,
+            PageFileGrowth = new(3, 4, 0x80000005, 0, 0, 0) };
+        var queryDone = queryWaiting with { LabGate = new(3, 1, 1, 2, 3, 0, 0, 0) };
+        FlushOrderScenario.ValidatePreparationForwarded(prepareBefore, prepareForwarded, .002);
+        FlushOrderScenario.ValidateQueryDrained(prepareForwarded, queryWaiting, queryDone, waiting: true);
+        // The 0.4.912.1 shape: both controls drained (another barrier) and returned only after the hold.
+        foreach (var wrong in new[] { prepareForwarded with { OtherBarriers = prepareForwarded.OtherBarriers + 1 },
+            prepareForwarded with { PageFileGrowth = new(2, 4, 0, 0, 0, 0) }, prepareForwarded with { PageFileGrowth = new(3, 3, 0, 0, 0, 0) },
+            prepareForwarded with { PageFileGrowth = null }, prepareForwarded with { LabGate = queryDone.LabGate },
+            prepareForwarded with { FlushOrder = prepareForwarded.FlushOrder! with { Mode = 0 } } })
+            Reject(() => FlushOrderScenario.ValidatePreparationForwarded(prepareBefore, wrong, .002));
+        foreach (var seconds in new[] { double.NaN, -1, 1.01 })
+            Reject(() => FlushOrderScenario.ValidatePreparationForwarded(prepareBefore, prepareForwarded, seconds));
+        Reject(() => FlushOrderScenario.ValidateQueryDrained(prepareForwarded, queryWaiting, queryDone, waiting: false));
+        foreach (var wrong in new[] { queryWaiting with { OtherBarriers = prepareForwarded.OtherBarriers },
+            queryWaiting with { PageFileGrowth = new(3, 4, 0x80000002, 0, 0, 0) }, queryWaiting with { LastBarrierCode = 0x56C04C },
+            queryWaiting with { LabGate = queryDone.LabGate } })
+            Reject(() => FlushOrderScenario.ValidateQueryDrained(prepareForwarded, wrong, queryDone, waiting: true));
+        Reject(() => FlushOrderScenario.ValidateQueryDrained(prepareForwarded, queryWaiting, queryWaiting, waiting: true));
+        var notification = FlushOrderScenario.DataSetRequest(0x80000002, 8192, 4096);
+        var allocation = FlushOrderScenario.DataSetRequest(0x80000005, 8192, 4096);
+        Check(notification.Length == 80 && BinaryPrimitives.ReadUInt32LittleEndian(notification) == 28 &&
+            BinaryPrimitives.ReadUInt32LittleEndian(notification.AsSpan(4)) == 0x80000002 &&
+            BinaryPrimitives.ReadUInt32LittleEndian(notification.AsSpan(12)) == 32 && BinaryPrimitives.ReadUInt32LittleEndian(notification.AsSpan(16)) == 28 &&
+            BinaryPrimitives.ReadUInt32LittleEndian(notification.AsSpan(20)) == 64 && BinaryPrimitives.ReadUInt32LittleEndian(notification.AsSpan(24)) == 16 &&
+            BinaryPrimitives.ReadUInt32LittleEndian(notification.AsSpan(36)) == 2 && BinaryPrimitives.ReadUInt32LittleEndian(notification.AsSpan(40)) == 1 &&
+            new Guid(notification.AsSpan(44, 16)) == new Guid("0d0a64a1-38fc-4db8-9fe7-3f4352cd7c5c") &&
+            BinaryPrimitives.ReadInt64LittleEndian(notification.AsSpan(64)) == 8192 && BinaryPrimitives.ReadUInt64LittleEndian(notification.AsSpan(72)) == 4096 &&
+            allocation.Length == 48 && BinaryPrimitives.ReadUInt32LittleEndian(allocation.AsSpan(12)) == 0 &&
+            BinaryPrimitives.ReadUInt32LittleEndian(allocation.AsSpan(20)) == 32 && BinaryPrimitives.ReadInt64LittleEndian(allocation.AsSpan(32)) == 8192,
+            "Data-set requests: 28-byte header, page-file notification parameters, one 8-byte-aligned range");
         Reject(() => FlushOrderScenario.ValidateRamAdmission(orderBefore, orderAfter with { FlushOrder = null }));
         Reject(() => FlushOrderScenario.ValidateRamAdmission(orderBefore, orderAfter with
             { Attribution = orderAfter.Attribution! with { LowerFlushAttempts = 1 } }));

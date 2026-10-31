@@ -165,6 +165,7 @@ static void Publish(QC_CACHE* c)
     c->Diagnostics.SafeRangeCount = c->SafePaging.Count;
     c->Diagnostics.OrderedTrimsPending = c->QueuedTrims;
     c->Diagnostics.OrderedFlushesPending = c->OrderedFlushes;
+    c->Diagnostics.PagingLearnPending = c->PagingLearners;
     c->DiagnosticsSnapshot = c->Diagnostics;
     c->Performance.Version = 5;
     c->Performance.Size = sizeof(QC_PERFORMANCE);
@@ -614,12 +615,24 @@ static NTSTATUS LowerIo(QC_CACHE* c, ULONG major, QC_SLOT* slot = nullptr, ULONG
         return STATUS_DEVICE_DATA_ERROR;
     return STATUS_SUCCESS;
 }
+// Windows' page-file preparation (volume function 19, read and write access): NTFS sends it before it
+// extends a page file, so the volume drivers below can make the new extents ready for paging I/O. It reads
+// and changes no stored data. Taken for a media change, it first wrote out every unwritten byte on the
+// request worker, so page-file growth, the memory commits waiting for it and every other C: request waited
+// for the whole backlog (#32: up to 5 min behind a lab-slowed write-out). Plan 219.
+static constexpr ULONG QcVolumePreparePagingIo = 0x0056C04C;
+static_assert(DEVICE_TYPE_FROM_CTL_CODE(QcVolumePreparePagingIo) == 'V' && ((QcVolumePreparePagingIo >> 2) & 0xFFF) == 19 &&
+              ((QcVolumePreparePagingIo >> 14) & 3) == (FILE_READ_ACCESS | FILE_WRITE_ACCESS) &&
+              (QcVolumePreparePagingIo & 3) == METHOD_BUFFERED);
 // Read-only queries versus controls that can change stored data. The access bits of a
 // control code state whether its caller may modify the device; every media-modifying
 // storage/disk control declares FILE_WRITE_ACCESS, except the media-swap, bus/device
-// reset and data-set-attribute (TRIM) codes listed explicitly below.
+// reset and data-set-attribute (TRIM) codes listed explicitly below. Page-file
+// preparation declares write access but changes no data.
 constexpr bool QcMayChangeMedia(ULONG code)
 {
+    if (code == QcVolumePreparePagingIo)
+        return false;
     if (((code >> 14) & 3) & FILE_WRITE_ACCESS)
         return true;
     switch (code)
@@ -641,6 +654,7 @@ constexpr bool QcMayChangeMedia(ULONG code)
 // Compile-time contract: the polled queries that previously wiped the cache stay read-only,
 // and destructive controls keep draining and invalidating.
 static_assert(!QcMayChangeMedia(IOCTL_STORAGE_FIRMWARE_GET_INFO));
+static_assert(!QcMayChangeMedia(QcVolumePreparePagingIo));
 // QcCacheProcess reports a transferred control only on the media-changing path, where an offloaded
 // explicit flush (plan 217) returns: the worker must never complete that IRP as well.
 static_assert(QcMayChangeMedia(IOCTL_QCACHE_CONTROL_V1) && !QcObservationCode(IOCTL_QCACHE_CONTROL_V1));
@@ -667,6 +681,37 @@ static_assert(QcMayChangeMedia(IOCTL_DISK_FORMAT_TRACKS));
 static_assert(QcMayChangeMedia(IOCTL_SCSI_PASS_THROUGH));
 static_assert(QcMayChangeMedia(IOCTL_STORAGE_EJECT_MEDIA));
 static_assert(QcMayChangeMedia(IOCTL_STORAGE_FIRMWARE_DOWNLOAD));
+// The action of a data-set request (IOCTL_STORAGE_MANAGE_DATA_SET_ATTRIBUTES) from its buffered header,
+// or 0 when the request is not one or its header is malformed.
+static ULONG DataSetAction(PIRP irp, PIO_STACK_LOCATION stack)
+{
+    if (stack->MajorFunction != IRP_MJ_DEVICE_CONTROL ||
+        stack->Parameters.DeviceIoControl.IoControlCode != IOCTL_STORAGE_MANAGE_DATA_SET_ATTRIBUTES ||
+        stack->Parameters.DeviceIoControl.InputBufferLength < sizeof(DEVICE_MANAGE_DATA_SET_ATTRIBUTES) ||
+        !irp->AssociatedIrp.SystemBuffer)
+        return 0;
+    const auto input = static_cast<const DEVICE_MANAGE_DATA_SET_ATTRIBUTES*>(irp->AssociatedIrp.SystemBuffer);
+    return input->Size == sizeof(*input) ? static_cast<ULONG>(input->Action) : 0;
+}
+// QueueCache's explicit flush and lab gate: neither frees nor reconfigures anything a page-file learner uses.
+static bool IgnoresPagingLearners(PIRP irp, PIO_STACK_LOCATION stack)
+{
+    if (stack->MajorFunction != IRP_MJ_DEVICE_CONTROL ||
+        stack->Parameters.DeviceIoControl.IoControlCode != IOCTL_QCACHE_CONTROL_V1 ||
+        stack->Parameters.DeviceIoControl.InputBufferLength != sizeof(QC_COMMAND) || !irp->AssociatedIrp.SystemBuffer)
+        return false;
+    const auto command = static_cast<const QC_COMMAND*>(irp->AssociatedIrp.SystemBuffer);
+    return command->Action == QcFlush || command->Action == QcLabGate;
+}
+// QcMayChangeMedia for one request. A data-set notification only tells the device which ranges a file type
+// (page file, hibernation, dump) starts or stops using; it reads and changes no data (plan 219). Other
+// non-destructive data-set actions keep the drain: an offload read takes a token of the data on the disk
+// now, and an allocation query reports the disk's current state, so both must follow every earlier write.
+static bool MediaChangingControl(PIRP irp, PIO_STACK_LOCATION stack)
+{
+    return DataSetAction(irp, stack) != DeviceDsmAction_Notification &&
+           QcMayChangeMedia(stack->Parameters.DeviceIoControl.IoControlCode);
+}
 // A file system letting go of the volume: NTFS allows media removal when it dismounts. Detaching a
 // virtual disk dismounts and then removes the volume without a query-remove (traced on the VM, #21:
 // IOCTL_DISK_MEDIA_REMOVAL, a storage query, device relations, then surprise removal), so this is the
@@ -1043,6 +1088,8 @@ static void AdvanceFrontier(QC_CACHE* c)
         if (fence.Ranges) next = min(next, fence.Epoch);
     c->DrainEpoch = QcNextFrontier(c->DrainEpoch, next, c->WriteEpoch);
     c->EpochNeedsFlush = FALSE;
+    if (c->PagingLearners) // Page-file learners start once the frontier passes them (plan 219).
+        KeSetEvent(&c->PagingWork, IO_NO_INCREMENT, FALSE);
 }
 // Mutex held. True when the fence's sorted, merged, disjoint ranges cover part of [first, end).
 static bool FenceOverlaps(const QC_TRIM_FENCE& fence, LONGLONG first, LONGLONG end)
@@ -1137,18 +1184,21 @@ static ULONG SelectDrainCandidate(QC_CACHE* c, bool policyDrain)
             return index;
     return NoSlot;
 }
-// writesOnly: only offloaded write copies (whose blocks are still Filling).
+// writesOnly: only offloaded write copies (whose blocks are still Filling) and page-file learners.
 // Asynchronous lower TRIMs count only for trims: their cache effect is already
 // applied and their fence keeps drains out; a forwarded write waits in OriginalIo.
 // An offloaded ordered flush never counts: it pins nothing and waits only for the drain.
-static bool PagingReadsOverlap(QC_CACHE* c, LONGLONG first, LONGLONG end, bool writesOnly = false, bool trims = false)
+// Page-file learners (plan 219) count unless learners is false: they pin nothing either, so a whole-table
+// wait that only protects pins and copies (TRIM, QueueCache's own controls) must not wait for the backlog.
+static bool PagingReadsOverlap(QC_CACHE* c, LONGLONG first, LONGLONG end, bool writesOnly = false, bool trims = false,
+                               bool learners = true)
 {
     bool overlap = false;
     KIRQL irql;
     KeAcquireSpinLock(&c->PagingLock, &irql);
     for (const auto& read : c->PagingReads)
-        if (read.Irp && !read.Flush && (!writesOnly || read.Write) && (trims || !read.Trim) && read.Start < end &&
-            read.End > first)
+        if (read.Irp && !read.Flush && (!writesOnly || read.Write) && (trims || !read.Trim) &&
+            (learners || !read.Learn) && read.Start < end && read.End > first)
         {
             overlap = true;
             break;
@@ -1162,13 +1212,14 @@ static bool PagingReadsOverlap(QC_CACHE* c, LONGLONG first, LONGLONG end, bool w
 // the blocked range, so the overlapping set only shrinks. A full wait (no range)
 // never services, so it cannot be extended indefinitely by new offloads.
 static void WaitForPagingReads(QC_CACHE* c, LONGLONG first, LONGLONG end, PIRP blockedWrite,
-                               volatile LONG64* counter, bool writesOnly = false, bool trims = false)
+                               volatile LONG64* counter, bool writesOnly = false, bool trims = false,
+                               bool learners = true)
 {
     bool counted = false;
     for (;;)
     {
         KeClearEvent(&c->PagingDone);
-        if (!PagingReadsOverlap(c, first, end, writesOnly, trims))
+        if (!PagingReadsOverlap(c, first, end, writesOnly, trims, learners))
             return;
         if (!counted)
         {
@@ -1346,7 +1397,8 @@ static void Drainer(PVOID context)
                                          static_cast<ULONGLONG>(WriteLimit(c)) * Chunk,
                                          now - c->Slots[c->Head].DirtySince,
                                          now - c->LastWriteTime,
-                                         c->Barrier || c->WriterWaiting || c->EpochWaiters || c->OrderedFlushes,
+                                         c->Barrier || c->WriterWaiting || c->EpochWaiters || c->OrderedFlushes ||
+                                             c->PagingLearners,
                                          pressure);
         c->Pressure = pressure;
         const bool fenceDrain = c->RangeDrain && !c->RangeForward;
@@ -2085,7 +2137,7 @@ static bool OffloadOrderedFlush(QC_CACHE* c, PIRP irp)
         entry->Start = entry->End = 0;
         entry->Sequence = ++c->PagingSequence;
         entry->Started = FALSE;
-        entry->Write = entry->WriteThrough = entry->Trim = FALSE;
+        entry->Write = entry->WriteThrough = entry->Trim = entry->Learn = FALSE;
         entry->Flush = TRUE;
         entry->Fence = 0;
         entry->Source = nullptr;
@@ -2447,9 +2499,63 @@ static PUCHAR Map(PIRP irp)
                 ((irp->Flags & IRP_PAGING_IO) ? HighPagePriority : NormalPagePriority) | MdlMappingNoExecute));
     return static_cast<PUCHAR>(irp->AssociatedIrp.SystemBuffer); // Neither-I/O is not supported for cached data.
 }
+// Returned by Write when an offloaded-request thread now owns the IRP (payload copy, page-file learner).
+static constexpr NTSTATUS QcWriteTransferred = STATUS_PENDING;
+// Plan 219, request worker, Mutex held. The first write into a page-file range not yet known safe needs every
+// group sealed before it on the disk: the range may hold a deleted file's clusters whose deletion is still in RAM.
+// The barrier waited for that on the request worker, so every later C: request waited for the whole backlog;
+// after page-file growth that was minutes (#32). Seal the open group and leave the write in the offload table,
+// without a thread, until the frontier passes it (PagingReader); its range keeps overlapping reads and writes out
+// meanwhile. True: irp transferred, Mutex released. False (ordering off, paused or faulted cache, teardown, no
+// free entry): Mutex still held, and the caller uses the barrier.
+static bool OffloadPagingLearn(QC_CACHE* c, PIRP irp, LONGLONG first, LONGLONG end)
+{
+    if (!c->ReadThreads[0].Thread || !c->CompleteRequest || !FlushOrdering(c) || !c->Enabled ||
+        !NT_SUCCESS(c->State.LastError) || c->Gone || c->Stop || c->PagingLearners >= QcPagingLearnMax ||
+        !SealEpoch(c)) // An overflow faults the cache; the barrier then reports it.
+        return false;
+    QC_PAGING_READ* entry = nullptr;
+    KIRQL irql;
+    KeAcquireSpinLock(&c->PagingLock, &irql);
+    if (!c->PagingStop)
+        for (auto& read : c->PagingReads)
+            if (!read.Irp)
+            {
+                entry = &read;
+                break;
+            }
+    if (entry)
+    {
+        entry->Irp = irp;
+        entry->Start = first;
+        entry->End = end;
+        entry->Sequence = ++c->PagingSequence;
+        entry->Started = FALSE;
+        entry->Write = TRUE; // Overlapping reads wait for it, as for a write copy.
+        entry->WriteThrough = entry->Trim = entry->Flush = FALSE;
+        entry->Learn = TRUE;
+        entry->Fence = 0;
+        entry->Source = nullptr;
+        entry->FlushEpoch = c->WriteEpoch;
+        entry->FlushResets = c->EpochResets;
+        entry->LearnClears = c->Diagnostics.SafeRangeClears;
+        // Not counted in PagingQueued, like an ordered flush: the caller path must not back off while it waits.
+    }
+    KeReleaseSpinLock(&c->PagingLock, irql);
+    if (!entry)
+        return false;
+    ++c->PagingLearners; // Before a thread can take Mutex to finish it.
+    ++c->Diagnostics.PagingLearnOffloaded;
+    WakeDrainers(c);
+    Publish(c);
+    ReleaseCache(c);
+    KeSetEvent(&c->PagingWork, IO_NO_INCREMENT, FALSE);
+    return true;
+}
 // Ordered direct path for paging-marked writes that are not admitted to RAM
 // (special-file ranges, no current special map, or an unmappable buffer).
-// Caller holds Mutex; it is released on return.
+// Caller holds Mutex; it is released on return. A page-file learner may instead
+// return QcWriteTransferred (OffloadPagingLearn).
 // Writes one request straight to the disk: a paging write that is not cached, or a Strict
 // write-through write (#16).
 static NTSTATUS DirectWrite(QC_CACHE* c, PIRP irp, LONGLONG first, ULONG length)
@@ -2487,6 +2593,9 @@ static NTSTATUS DirectWrite(QC_CACHE* c, PIRP irp, LONGLONG first, ULONG length)
     {
         if (pagingFile) ++c->Diagnostics.PagingOrderLearnBarriers;
         else ++c->Diagnostics.UnidentifiedDirectBarriers;
+        if (pagingFile && OffloadPagingLearn(c, irp, first, end))
+            return QcWriteTransferred; // An offload thread completes irp (RunPagingLearn).
+        if (pagingFile) ++c->Diagnostics.PagingLearnFallbacks;
         ReleaseCache(c);
         const auto status = QcCacheBarrier(c, FALSE, QcOrderedBarrier, irp);
         if (!NT_SUCCESS(status)) return status;
@@ -2579,10 +2688,106 @@ static NTSTATUS DirectWrite(QC_CACHE* c, PIRP irp, LONGLONG first, ULONG length)
     ReleaseCache(c);
     return status;
 }
+// PagingLock held, Mutex not: a waiting page-file learner may start once every group sealed before it is on the
+// disk, or once that can no longer happen (ordering off or restarted, fault, stop, removal, teardown). These reads
+// without Mutex only schedule the entry; RunPagingLearn checks again under Mutex.
+static bool LearnReady(QC_CACHE* c, const QC_PAGING_READ& entry)
+{
+    return c->PagingStop || c->Gone || c->Stop || !NT_SUCCESS(c->State.LastError) || !FlushOrdering(c) ||
+           c->EpochResets != entry.FlushResets || c->DrainEpoch >= entry.FlushEpoch;
+}
+// Offload thread, plan 219: a page-file write that waited in the table until every group sealed before it was on
+// the disk. The rest is DirectWrite's unsafe path without the request worker's range fence: flush the disk (as the
+// barrier ended), write, flush again, learn the range. No overlapping version or queued TRIM can appear meanwhile
+// (its range keeps writes out; a later TRIM queues behind it); if one is found anyway, fail closed rather than write
+// ahead of it. Group numbers restart, and ordering turns off, only at a disabled boundary whose barrier first drained
+// and flushed everything, so then the write may go; it is not learned.
+static NTSTATUS RunPagingLearn(QC_CACHE* c, const QC_PAGING_READ* entry)
+{
+    const auto irp = entry->Irp;
+    const auto first = entry->Start;
+    const auto end = entry->End;
+    const auto length = static_cast<ULONG>(end - first);
+    AcquireCache(c);
+    while (FlushOrdering(c) && c->EpochResets == entry->FlushResets && c->DrainEpoch < entry->FlushEpoch &&
+           NT_SUCCESS(c->State.LastError) && !c->Gone && !c->Stop && !c->PagingStop)
+    {
+        KeClearEvent(&c->Changed);
+        WakeDrainers(c);
+        ReleaseCache(c);
+        LARGE_INTEGER interval;
+        interval.QuadPart = -1000000;
+        KeWaitForSingleObject(&c->Changed, Executive, KernelMode, FALSE, &interval);
+        AcquireCache(c);
+    }
+    auto status = c->Gone ? STATUS_DEVICE_NOT_CONNECTED : c->Stop ? STATUS_DEVICE_NOT_READY : c->State.LastError;
+    const bool sameGroups = FlushOrdering(c) && c->EpochResets == entry->FlushResets;
+    if (NT_SUCCESS(status) && sameGroups && c->DrainEpoch < entry->FlushEpoch)
+        status = STATUS_DEVICE_NOT_READY; // Teardown before its groups reached the disk: never write ahead of them.
+    if (NT_SUCCESS(status) && (PendingRange(c, first, end) || QueuedTrimOverlaps(c, first, end)))
+    {
+        ++c->Diagnostics.SafeRangeOverlapFound; // The witness DirectWrite keeps for an impossible overlap.
+        status = STATUS_DEVICE_BUSY;
+    }
+    if (!NT_SUCCESS(status))
+    {
+        --c->PagingLearners;
+        Publish(c);
+        KeSetEvent(&c->Changed, IO_NO_INCREMENT, FALSE);
+        ReleaseCache(c);
+        return status;
+    }
+    const bool gateRecord = LabGateOverlaps(c, first, end);
+    InvalidateCleanRange(c, first, length);
+    // Lab fault 10 applies only to a force-direct range, which only verification sets.
+    bool injectFailure = false;
+    if (c->InjectFault == 10)
+    {
+        KIRQL irql;
+        KeAcquireSpinLock(&c->RangeLock, &irql);
+        injectFailure = RangesOverlap(c->ForceDirect, c->ForceDirectCount, first, end);
+        KeReleaseSpinLock(&c->RangeLock, irql);
+        if (injectFailure)
+            c->InjectFault = 0;
+    }
+    ReleaseCache(c);
+    auto flushed = LowerIo(c, IRP_MJ_FLUSH_BUFFERS);
+    status = flushed;
+    if (NT_SUCCESS(status))
+    {
+        const bool gateSubmit = gateRecord && RecordLabSequence(c, &c->LabGateDirectSubmitSeq);
+        status = OriginalIo(c, irp, false);
+        // Lab-only: the direct write reached the disk but is reported as failed.
+        if (injectFailure && NT_SUCCESS(status))
+        {
+            status = STATUS_IO_DEVICE_ERROR;
+            irp->IoStatus.Information = 0;
+        }
+        if (gateSubmit)
+            RecordLabSequence(c, &c->LabGateDirectDoneSeq);
+        if (NT_SUCCESS(status) && irp->IoStatus.Information != length)
+            status = STATUS_DEVICE_DATA_ERROR;
+        flushed = LowerIo(c, IRP_MJ_FLUSH_BUFFERS);
+        if (NT_SUCCESS(status)) status = flushed;
+    }
+    AcquireCache(c);
+    if (!NT_SUCCESS(flushed) && NT_SUCCESS(c->State.LastError) && !c->Gone && !c->Stop) Fault(c, flushed);
+    // Any clear of the safe set since the seal (a TRIM, a cached or other direct write, a new seed) may concern this
+    // range, so it is learned only when none happened; its next write then learns again.
+    if (NT_SUCCESS(status) && sameGroups && FlushOrdering(c) && c->EpochResets == entry->FlushResets &&
+        c->Diagnostics.SafeRangeClears == entry->LearnClears && !QcSafePagingAdd(c->SafePaging, first, end))
+        ++c->Diagnostics.SafeRangeTableFull;
+    // A failed or short lower write may still have changed some sectors; no old clean view may survive it.
+    InvalidateCleanRange(c, first, length);
+    --c->PagingLearners;
+    Publish(c);
+    KeSetEvent(&c->Changed, IO_NO_INCREMENT, FALSE);
+    WakeDrainers(c);
+    ReleaseCache(c);
+    return status;
+}
 // Returned by a caller-thread attempt before it changes anything.
 static constexpr NTSTATUS QcCallerPathDeclined = STATUS_RETRY;
-// Returned by Write when an offloaded-request thread now owns the IRP (payload copy).
-static constexpr NTSTATUS QcWriteTransferred = STATUS_PENDING;
 static NTSTATUS FinishWrite(QC_CACHE* c, PIRP irp, LONGLONG offset, ULONG length, const ULONG* slots,
                             bool writeThrough, bool pagingIo);
 // callerPath: QcCacheTryCallerPath. Anything that would wait, forward to the
@@ -2915,7 +3120,7 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
             entry->Started = FALSE;
             entry->Write = TRUE;
             entry->WriteThrough = writeThrough;
-            entry->Trim = entry->Flush = FALSE;
+            entry->Trim = entry->Flush = entry->Learn = FALSE;
             entry->Source = source;
             RecordMaximum(&c->PagingOffloadMaxQueued, ++c->PagingQueued);
         }
@@ -2981,7 +3186,8 @@ static NTSTATUS FinishWrite(QC_CACHE* c, PIRP irp, LONGLONG offset, ULONG length
     const auto ordinaryLimit = QcAdmissionWriteLimit(
         WriteLimit(c), QcCachePagingPathCount(c) > 0, false);
     const bool pagingReservePressure = pagingIo && c->DirtySlots > ordinaryLimit;
-    const bool forced = c->Barrier || c->WriterWaiting || c->EpochWaiters || c->OrderedFlushes || pagingReservePressure;
+    const bool forced = c->Barrier || c->WriterWaiting || c->EpochWaiters || c->OrderedFlushes || c->PagingLearners ||
+                        pagingReservePressure;
     if (QcShouldWakeAfterWrite(c->Options, c->State.DirtyBytes, static_cast<ULONGLONG>(WriteLimit(c)) * Chunk,
                               c->LastWriteTime - c->Slots[c->Head].DirtySince, c->State.InFlightBytes,
                               forced, pressure) &&
@@ -3543,7 +3749,7 @@ bool QcCacheOffloadPagingRead(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, bool 
         entry->Sequence = ++c->PagingSequence;
         entry->Started = FALSE;
         entry->Write = entry->WriteThrough = FALSE;
-        entry->Trim = entry->Flush = FALSE;
+        entry->Trim = entry->Flush = entry->Learn = FALSE;
         entry->Source = nullptr;
         RecordMaximum(&c->PagingOffloadMaxQueued, ++c->PagingQueued);
     }
@@ -3599,11 +3805,18 @@ static void PagingReader(PVOID context)
     {
         QC_PAGING_READ* next = nullptr;
         ULONG waiting = 0;
+        bool learners = false;
         KIRQL irql;
         KeAcquireSpinLock(&c->PagingLock, &irql);
         for (auto& read : c->PagingReads)
             if (read.Irp && !read.Started)
             {
+                // A page-file learner stays in the table, without a thread, until its earlier groups are on the disk.
+                if (read.Learn && !LearnReady(c, read))
+                {
+                    learners = true;
+                    continue;
+                }
                 ++waiting;
                 if (!next || read.Sequence < next->Sequence)
                     next = &read;
@@ -3620,7 +3833,10 @@ static void PagingReader(PVOID context)
             break;
         if (!next)
         {
-            KeWaitForSingleObject(&c->PagingWork, Executive, KernelMode, FALSE, nullptr);
+            // The frontier's advance wakes a thread for due learners; look again at least every 100 ms meanwhile.
+            LARGE_INTEGER interval;
+            interval.QuadPart = -1000000;
+            KeWaitForSingleObject(&c->PagingWork, Executive, KernelMode, FALSE, learners ? &interval : nullptr);
             continue;
         }
         auto irp = next->Irp;
@@ -3629,16 +3845,20 @@ static void PagingReader(PVOID context)
         // same blocks during its lower wait. Ordinary staged misses are retained.
         auto status = next->Flush ? RunOrderedFlush(c, next)
                       : next->Trim ? RunAsyncTrim(c, next)
+                      : next->Learn ? RunPagingLearn(c, next)
                       : next->Write ? CopyOffloadedWrite(c, next, reader->Pins)
                                     : Read(c, irp, false, false, reader->Pins);
-        if (pagingIo)
+        // Process counted the learner's request when it was handed over; its completion is counted here.
+        if (next->Learn)
+            InterlockedIncrement64(NT_SUCCESS(status) ? &c->PagingRoutedWriteCompletions : &c->PagingRoutedWriteFailures);
+        else if (pagingIo)
         {
             InterlockedIncrement64(NT_SUCCESS(status) ? &c->PagingOffloadCompletions : &c->PagingOffloadFailures);
             InterlockedIncrement64(NT_SUCCESS(status) ? &c->PagingRoutedReadCompletions : &c->PagingRoutedReadFailures);
         }
         c->CompleteRequest(c->ServiceContext, irp, status);
         KeAcquireSpinLock(&c->PagingLock, &irql);
-        if (!next->Trim && !next->Flush)
+        if (!next->Trim && !next->Flush && !next->Learn)
             --c->PagingQueued;
         next->Irp = nullptr;
         KeReleaseSpinLock(&c->PagingLock, irql);
@@ -3792,7 +4012,7 @@ static bool OffloadTrim(QC_CACHE* c, PIRP irp, ULONG fence, LONGLONG low, LONGLO
         entry->Started = FALSE;
         entry->Write = entry->WriteThrough = FALSE;
         entry->Trim = TRUE;
-        entry->Flush = FALSE;
+        entry->Flush = entry->Learn = FALSE;
         entry->Fence = fence;
         entry->Source = nullptr;
         // Not counted in PagingQueued: the caller path must not back off while a slow lower TRIM
@@ -4375,7 +4595,8 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
         if (pagingIo)
             InterlockedIncrement64(write ? &c->PagingRoutedWriteRequests : &c->PagingRoutedReadRequests);
         auto status = write ? Write(c, irp) : Read(c, irp, false, true, nullptr, false, !pagingIo);
-        if (pagingIo)
+        // A page-file learner handed to the offload table (plan 219) is counted when that completes it.
+        if (pagingIo && !(write && status == QcWriteTransferred))
             InterlockedIncrement64(write
                 ? NT_SUCCESS(status) ? &c->PagingRoutedWriteCompletions : &c->PagingRoutedWriteFailures
                 : NT_SUCCESS(status) ? &c->PagingRoutedReadCompletions : &c->PagingRoutedReadFailures);
@@ -4410,6 +4631,7 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
         {
             ++c->Diagnostics.OtherBarriers;
             c->Diagnostics.LastBarrierCode = stack->Parameters.DeviceIoControl.IoControlCode;
+            c->Diagnostics.LastBarrierAction = 0;
             Publish(c);
         }
         ReleaseCache(c);
@@ -4432,8 +4654,24 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
         // Only explicit observations bypass admission. Other controls retain the
         // existing ordered-worker media-invalidation policy; do not turn every
         // vendor inventory query into a clean-cache wipe as a side effect here.
-        if (QcObservationRequest(stack) || !QcMayChangeMedia(stack->Parameters.DeviceIoControl.IoControlCode))
+        if (QcObservationRequest(stack))
             return OriginalIo(c, irp);
+        if (!MediaChangingControl(irp, stack))
+        {
+            // Plan 219: evidence that page-file preparation and data-set notifications were not drained.
+            const auto code = stack->Parameters.DeviceIoControl.IoControlCode;
+            if (code == QcVolumePreparePagingIo || code == IOCTL_STORAGE_MANAGE_DATA_SET_ATTRIBUTES)
+            {
+                AcquireCache(c);
+                if (code == QcVolumePreparePagingIo)
+                    ++c->Diagnostics.CriticalIoPreparations;
+                else
+                    ++c->Diagnostics.DataSetNotifications;
+                Publish(c);
+                ReleaseCache(c);
+            }
+            return OriginalIo(c, irp);
+        }
     }
     // Modifying and unclassified controls (including unsupported TRIM) must not overtake accepted dirty
     // writes or queued ordered TRIMs.
@@ -4453,6 +4691,7 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
             stack->MajorFunction == IRP_MJ_DEVICE_CONTROL || stack->MajorFunction == IRP_MJ_INTERNAL_DEVICE_CONTROL
                 ? stack->Parameters.DeviceIoControl.IoControlCode
                 : stack->MajorFunction;
+        c->Diagnostics.LastBarrierAction = DataSetAction(irp, stack); // Which data-set action still drained (plan 219).
         Publish(c);
         ReleaseCache(c);
     }
@@ -4541,17 +4780,22 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, bool* trans
         return status;
     }
     const bool control = major == IRP_MJ_DEVICE_CONTROL || major == IRP_MJ_INTERNAL_DEVICE_CONTROL;
-    if (major == IRP_MJ_FLUSH_BUFFERS ||
-        (control && (QcObservationRequest(stack) || !QcMayChangeMedia(stack->Parameters.DeviceIoControl.IoControlCode))))
+    if (major == IRP_MJ_FLUSH_BUFFERS || (control && (QcObservationRequest(stack) || !MediaChangingControl(irp, stack))))
         return Process(c, irp, deviceBytes);
     AcquireCache(c);
     c->OffloadBlocked = TRUE;
     ReleaseCache(c);
     // TRIMs commute, so an asynchronous TRIM waits for other offloads (their pins and
-    // copies) but not for earlier outstanding lower TRIMs.
+    // copies) but not for earlier outstanding lower TRIMs. Neither it nor QueueCache's
+    // explicit flush or lab gate waits for page-file learners (plan 219): learners pin
+    // nothing, a TRIM queues behind them, the flush waits for its own groups (plan 217),
+    // and a learner may be waiting for the hold that the gate command releases. Every
+    // other control, including release and reconfiguration, still waits for them.
     if (control && stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_STORAGE_MANAGE_DATA_SET_ATTRIBUTES &&
         (InterlockedCompareExchange(&c->TrimMode, 0, 0) & QcTrimAsync))
-        WaitForPagingReads(c, MINLONGLONG, MAXLONGLONG, nullptr, &c->PagingOffloadIdleWaits);
+        WaitForPagingReads(c, MINLONGLONG, MAXLONGLONG, nullptr, &c->PagingOffloadIdleWaits, false, false, false);
+    else if (control && IgnoresPagingLearners(irp, stack))
+        WaitForPagingReads(c, MINLONGLONG, MAXLONGLONG, nullptr, &c->PagingOffloadIdleWaits, false, true, false);
     else
         QcCacheWaitPagingReads(c);
     auto status = Process(c, irp, deviceBytes);

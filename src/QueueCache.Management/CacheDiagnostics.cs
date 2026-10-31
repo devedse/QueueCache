@@ -78,9 +78,10 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public const int WriteThroughGroupsWireSize = 1312;
     public const int PagingOrderWireSize = 1416;
     public const int OrderedTrimWireSize = 1464;
-    /// <summary>The newest version: the buffer callers offer, so the driver returns every known field.</summary>
     public const int OrderedFlushWireSize = 1488;
-    public const int CurrentWireSize = OrderedFlushWireSize;
+    /// <summary>The newest version: the buffer callers offer, so the driver returns every known field.</summary>
+    public const int PageFileGrowthWireSize = 1536;
+    public const int CurrentWireSize = PageFileGrowthWireSize;
     public CacheAttribution? Attribution { get; init; }
     public CacheUsagePaths? UsagePaths { get; init; }
     public CacheUsageActivities? UsageActivity { get; init; }
@@ -137,6 +138,9 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public CacheOrderedTrims? OrderedTrims { get; init; }
     /// <summary>V30 (plan 217): ordered Fast explicit flushes that waited off the request worker.</summary>
     public CacheOrderedFlushes? OrderedFlushes { get; init; }
+    /// <summary>V31 (plan 219): controls forwarded without draining and page-file learners that waited off the
+    /// request worker.</summary>
+    public CachePageFileGrowth? PageFileGrowth { get; init; }
     public static CacheDiagnostics Decode(ReadOnlySpan<byte> bytes)
     {
         var expectedVersion = bytes.Length switch
@@ -171,6 +175,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             PagingOrderWireSize => 28u,
             OrderedTrimWireSize => 29u,
             OrderedFlushWireSize => 30u,
+            PageFileGrowthWireSize => 31u,
             _ => 0u
         };
         if (expectedVersion == 0 || BinaryPrimitives.ReadUInt32LittleEndian(bytes) != expectedVersion ||
@@ -409,6 +414,18 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             if (orderedFlushes.Pending > orderedFlushes.Offloaded || orderedFlushes.Pending > 4)
                 throw new InvalidDataException("Inconsistent ordered flush counters.");
         }
+        CachePageFileGrowth? pageFileGrowth = null;
+        if (bytes.Length >= PageFileGrowthWireSize)
+        {
+            var fields = new ulong[6];
+            for (var i = 0; i < fields.Length; ++i)
+                fields[i] = BinaryPrimitives.ReadUInt64LittleEndian(bytes[(OrderedFlushWireSize + 8 * i)..]);
+            pageFileGrowth = new(fields[0], fields[1], fields[2], fields[3], fields[4], fields[5]);
+            // At most QcPagingLearnMax wait at once, each counted when it was offloaded; an action is 32 bits.
+            if (pageFileGrowth.LearnPending > pageFileGrowth.LearnOffloaded || pageFileGrowth.LearnPending > 32 ||
+                pageFileGrowth.LastBarrierAction > uint.MaxValue)
+                throw new InvalidDataException("Inconsistent page-file growth counters.");
+        }
         if (writeThroughGroups is { Available: > 1 })
             throw new InvalidDataException("Invalid write-through availability.");
         if (flushOrder is { Mode: > 2 } || flushOrder is { CurrentEpoch: 0 } or { DrainingEpoch: 0 } ||
@@ -447,7 +464,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             WriteThroughGroups = writeThroughGroups,
             PagingOrder = pagingOrder,
             OrderedTrims = orderedTrims,
-            OrderedFlushes = orderedFlushes
+            OrderedFlushes = orderedFlushes,
+            PageFileGrowth = pageFileGrowth
         };
     }
 }
@@ -535,6 +553,13 @@ public sealed record CacheOrderedTrims(ulong Queued, ulong Sent, ulong Failures,
 /// offload thread, leaving the request worker free; those that used the barrier because no offload entry was free; and
 /// those waiting now. Lifetime counts except Pending.</summary>
 public sealed record CacheOrderedFlushes(ulong Offloaded, ulong Fallbacks, ulong Pending);
+/// <summary>V31 (plan 219): Windows' page-file preparation requests and data-set notifications forwarded without
+/// draining (they change no stored data); the data-set action of the control behind the last other barrier (0: not a
+/// data-set request); and first writes into a page-file range not yet known safe that waited for their earlier groups
+/// off the request worker, those that used the barrier instead, and those waiting now. Lifetime counts except
+/// LastBarrierAction and LearnPending.</summary>
+public sealed record CachePageFileGrowth(ulong PreparationsForwarded, ulong NotificationsForwarded, ulong LastBarrierAction,
+    ulong LearnOffloaded, ulong LearnFallbacks, ulong LearnPending);
 /// <summary>V28. Presence is the loaded driver's system-volume ordering capability. Last clear reason:
 /// 0 none, 1 enable, 2 disable, 3 allocation, 4 mode, 5 usage, 6 removal, 7 cached write,
 /// 8 other direct write, 9 TRIM, 10 seed replacement. Classification counters count writes only.</summary>

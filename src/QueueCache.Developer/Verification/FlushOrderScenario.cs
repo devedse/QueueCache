@@ -1,5 +1,8 @@
+using System.Buffers.Binary;
 using System.ComponentModel;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using Microsoft.Win32.SafeHandles;
 using QueueCache.Developer.FileTests;
 using QueueCache.Management;
 using QueueCache.Operations;
@@ -12,7 +15,7 @@ namespace QueueCache.Developer.Verification;
 public static class FlushOrderScenario
 {
     private const int Block = 4096, MiB = 1 << 20, Offset = 4 * MiB;
-    public const int CheckCount = 16 + PagingOrderScenario.CheckCount, WriteThroughCheckCount = 11;
+    public const int CheckCount = 17 + PagingOrderScenario.CheckCount, WriteThroughCheckCount = 11;
     public const ulong On = 1, WriteThrough = 2;
 
     /// <summary>Mode 1 runs every check, including the per-cache setting. Lab mode 2 (#31) runs the driver
@@ -297,6 +300,7 @@ public static class FlushOrderScenario
             {
                 checks.Add(await CheckTrimWhileGroupHeld(target, device, path, evidence));
                 checks.Add(await CheckFlushLeavesRequestsMoving(target, device, path, evidence));
+                checks.Add(await CheckPreparationNotDrained(target, device, path, evidence));
                 Apply(target, device, mode);
                 device.Control(WriteCacheAction.LabTrimMode, value: 3);
                 using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
@@ -627,6 +631,34 @@ public static class FlushOrderScenario
         return new("flush-order/trim-completes-while-group-held", "PASS",
             $"With an earlier group's lower write held, a TRIM of another block completed in {seconds:F3}s with its lower TRIM queued and unsent; the explicit flush then sent it. The held write, the trimmed block's rewrite and an untouched neighbor matched after release.");
     }
+    private static CachePageFileGrowth Growth(CacheDiagnostics d) =>
+        d.PageFileGrowth ?? throw new InvalidDataException("Missing V31 page-file growth evidence.");
+
+    /// <summary>Plan 219: with an earlier group held at the gate and another block unwritten, Windows' page-file
+    /// preparation and a data-set notification completed within a second without any barrier (before plan 219 each
+    /// wrote out every unwritten byte first).</summary>
+    public static void ValidatePreparationForwarded(CacheDiagnostics before, CacheDiagnostics after, double seconds)
+    {
+        var a = Growth(before);
+        var b = Growth(after);
+        if (!double.IsFinite(seconds) || seconds < 0 || seconds > 1 ||
+            after.LabGate is not { State: 2, OldLowerDoneSeq: > 0, OldRetireSeq: 0 } ||
+            b.PreparationsForwarded != a.PreparationsForwarded + 1 || b.NotificationsForwarded != a.NotificationsForwarded + 1 ||
+            after.OtherBarriers != before.OtherBarriers || after.FlushOrder?.Mode != On)
+            throw new InvalidDataException("Page-file preparation or a data-set notification did not pass the held group without a barrier.");
+    }
+
+    /// <summary>Plan 219: a data-set allocation query reports what the disk holds now, so it still waited for the held
+    /// group: it was blocked while the gate held, its barrier recorded the allocation action, and it finished only
+    /// after the held write retired.</summary>
+    public static void ValidateQueryDrained(CacheDiagnostics before, CacheDiagnostics during, CacheDiagnostics after, bool waiting)
+    {
+        if (!waiting || during.LabGate is not { State: 2, OldRetireSeq: 0 } || during.OtherBarriers != before.OtherBarriers + 1 ||
+            during.LastBarrierCode != ManageDataSet || Growth(during).LastBarrierAction != DsmAllocation ||
+            after.LabGate is not { OldRetireSeq: > 0 } || Growth(after).NotificationsForwarded != Growth(before).NotificationsForwarded)
+            throw new InvalidDataException("A data-set allocation query did not wait for the held group behind a recorded barrier.");
+    }
+
     // Plan 217 (R9: an explicit flush behind a 190,000-group backlog held the request worker, so every later C:
     // request waited 386 s). Eager drain starts the sealed group's lower write at once and the gate holds its
     // completion; the explicit flush must wait for that group off the worker, so a later write and read of another
@@ -704,6 +736,141 @@ public static class FlushOrderScenario
         return new("flush-order/flush-leaves-requests-moving", "PASS",
             $"With an earlier group's lower write held, the explicit flush waited off the request worker; a later write and read of another block completed in {seconds:F3}s meanwhile. The flush finished after that group's lower flush; the held write, the later write and an untouched neighbor matched after release.");
     }
+
+    // Plan 219 (#32): before growing a page file NTFS sends Windows' page-file preparation, and page-file ranges reach the
+    // storage stack as data-set notifications. Neither changes data, yet both used to write out every unwritten byte on the
+    // request worker first: page-file growth and every C: request then waited for the whole backlog. With an earlier group
+    // held and another block unwritten, both must complete at once; an allocation query, which does depend on the disk's
+    // current state, must still wait for the held group.
+    private static async Task<CheckResult> CheckPreparationNotDrained(DiskTarget target, CacheDevice device, string path, string evidence)
+    {
+        const long unwrittenOffset = Offset + 3 * Block;
+        Reset(device);
+        device.Control(WriteCacheAction.FlushOrder, value: On);
+        ConfigurationManager.Apply(target, new CacheConfiguration(64, CachePreset.Fast)
+        {
+            Options = new CacheOptions(Drain: DrainAlgorithm.Eager, BatchKiB: 4, Parallelism: 2, RetainWrites: false)
+        }, true);
+        double seconds;
+        int prepareError, notificationError, queryError = 0;
+        using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
+        {
+            var diskOffset = PagingCoherenceScenarios.DiskOffsetOf(path, Offset, target.Root);
+            var unwrittenDisk = PagingCoherenceScenarios.DiskOffsetOf(path, unwrittenOffset, target.Root);
+            device.Control(WriteCacheAction.LabGate, (ulong)diskOffset, 3000UL << 32 | Block);
+            Task? query = null;
+            try
+            {
+                file.Write(Offset, Pattern(20));
+                file.Flush(); // Seals the held group from volatile RAM.
+                var waiting = System.Diagnostics.Stopwatch.StartNew();
+                while (device.GetDiagnostics().LabGate is not { State: 2, OldLowerDoneSeq: > 0 })
+                {
+                    if (waiting.Elapsed.TotalSeconds > 3)
+                        throw new IOException("The sealed group's lower write did not reach the gate hold.");
+                    await Task.Delay(10);
+                }
+                file.Write(unwrittenOffset, Pattern(21)); // Unwritten: the old path drained it before forwarding.
+                var before = device.GetDiagnostics();
+                using (var volume = OpenVolume(target))
+                {
+                    var clock = System.Diagnostics.Stopwatch.StartNew();
+                    prepareError = VolumeControl(volume, PreparePagingIo, null);
+                    notificationError = VolumeControl(volume, ManageDataSet, DataSetRequest(DsmNotification, unwrittenDisk, Block));
+                    seconds = clock.Elapsed.TotalSeconds;
+                }
+                var forwarded = device.GetDiagnostics();
+                RunStorage.AtomicJson(evidence + ".preparation-before.json", before);
+                RunStorage.AtomicJson(evidence + ".preparation-forwarded.json", new
+                {
+                    Diagnostics = forwarded, Seconds = seconds, PrepareWin32Error = prepareError, NotificationWin32Error = notificationError
+                });
+                ValidatePreparationForwarded(before, forwarded, seconds);
+                // A synchronous handle serializes its IOCTLs: the waiting query gets its own.
+                query = Task.Run(() =>
+                {
+                    using var volume = OpenVolume(target);
+                    queryError = VolumeControl(volume, ManageDataSet, DataSetRequest(DsmAllocation, unwrittenDisk, Block), 4096);
+                });
+                CacheDiagnostics during;
+                waiting.Restart();
+                while ((during = device.GetDiagnostics()).OtherBarriers == forwarded.OtherBarriers)
+                {
+                    if (query.IsCompleted || waiting.Elapsed.TotalSeconds > 1)
+                        throw new IOException("The allocation query did not wait behind a barrier for the held group.");
+                    await Task.Delay(10);
+                }
+                var queryWaiting = !query.IsCompleted;
+                await query;
+                var after = device.GetDiagnostics();
+                RunStorage.AtomicJson(evidence + ".preparation-query.json", new { During = during, After = after, QueryWin32Error = queryError });
+                ValidateQueryDrained(forwarded, during, after, queryWaiting);
+            }
+            finally
+            {
+                device.Control(WriteCacheAction.LabGate, value: 0);
+                // Join the owned query before restoration; a failure already surfaced above.
+                if (query is not null) await Task.WhenAny(query);
+            }
+        }
+        Reset(device);
+        using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
+        {
+            AssertRead(file, Offset, Pattern(20));
+            AssertRead(file, unwrittenOffset, Pattern(21));
+            AssertRead(file, Offset + Block, Pattern(3));
+        }
+        return new("flush-order/paging-preparation-not-drained", "PASS",
+            $"With an earlier group held and another block unwritten, Windows' page-file preparation (Win32 result {prepareError}) and a page-file data-set notification (result {notificationError}) completed in {seconds:F3}s without a barrier. A data-set allocation query (result {queryError}) still waited for the held group behind a barrier that recorded its action. The held write, the unwritten block and an untouched neighbor matched after release.");
+    }
+
+    // Raw volume controls for plan 219. The lower stack may refuse these requests (the result is recorded); the cache's
+    // classification, which this check proves, happens before they are forwarded.
+    private const uint ManageDataSet = 0x002D9404, PreparePagingIo = 0x0056C04C;
+    private const uint DsmNotification = 0x80000002, DsmAllocation = 0x80000005;
+    private static readonly Guid PageFileType = new("0d0a64a1-38fc-4db8-9fe7-3f4352cd7c5c"); // FILE_TYPE_NOTIFICATION_GUID_PAGE_FILE
+
+    /// <summary>DEVICE_MANAGE_DATA_SET_ATTRIBUTES with one volume range. A notification carries a
+    /// DEVICE_DSM_NOTIFICATION_PARAMETERS block that ends page-file usage of the range (a hint only).</summary>
+    public static byte[] DataSetRequest(uint action, long volumeOffset, int length)
+    {
+        var notification = action == DsmNotification;
+        var rangesOffset = notification ? 64 : 32;
+        var input = new byte[rangesOffset + 16];
+        var w = input.AsSpan();
+        BinaryPrimitives.WriteUInt32LittleEndian(w, 28); // Size of the header
+        BinaryPrimitives.WriteUInt32LittleEndian(w[4..], action);
+        if (notification)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(w[12..], 32); // ParameterBlockOffset
+            BinaryPrimitives.WriteUInt32LittleEndian(w[16..], 28); // ParameterBlockLength
+            BinaryPrimitives.WriteUInt32LittleEndian(w[32..], 28); // DEVICE_DSM_NOTIFICATION_PARAMETERS.Size
+            BinaryPrimitives.WriteUInt32LittleEndian(w[36..], 2); // DEVICE_DSM_NOTIFY_FLAG_END
+            BinaryPrimitives.WriteUInt32LittleEndian(w[40..], 1); // NumFileTypeIDs
+            if (!PageFileType.TryWriteBytes(w[44..60]))
+                throw new InvalidOperationException("GUID layout.");
+        }
+        BinaryPrimitives.WriteUInt32LittleEndian(w[20..], (uint)rangesOffset);
+        BinaryPrimitives.WriteUInt32LittleEndian(w[24..], 16);
+        BinaryPrimitives.WriteInt64LittleEndian(w[rangesOffset..], volumeOffset);
+        BinaryPrimitives.WriteUInt64LittleEndian(w[(rangesOffset + 8)..], (ulong)length);
+        return input;
+    }
+
+    private static SafeFileHandle OpenVolume(DiskTarget target) =>
+        File.OpenHandle(@"\\.\" + target.Root.TrimEnd('\\'), FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+
+    private static int VolumeControl(SafeFileHandle volume, uint code, byte[]? input, int outputBytes = 0)
+    {
+        var output = outputBytes > 0 ? new byte[outputBytes] : null;
+        return DeviceIoControl(volume, code, input, input?.Length ?? 0, output, outputBytes, out _, IntPtr.Zero)
+            ? 0 : Marshal.GetLastWin32Error();
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeviceIoControl(SafeFileHandle device, uint code, byte[]? input, int inputLength,
+        byte[]? output, int outputLength, out int returned, IntPtr overlapped);
     private static void Reset(CacheDevice device)
     {
         device.Control(WriteCacheAction.Disable);

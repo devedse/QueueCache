@@ -408,7 +408,11 @@ selected for a drain in this allocation. Diagnostics V29 (plan 216) appends queu
 TRIMs, their lower TRIMs sent and failed, queued ones dropped unsent, TRIMs completed
 without a lower TRIM, and those queued now. Diagnostics V30 (plan 217) appends explicit
 flushes that waited off the request worker, those that used the barrier because no
-offload entry was free, and those waiting now. A lower group flush must be supported and
+offload entry was free, and those waiting now. Diagnostics V31 (plan 219) appends
+Windows' page-file preparation requests and data-set notifications passed on without
+writing anything out, the data-set action behind the last other barrier, and first
+writes into a page-file range not yet known safe that waited off the request worker,
+those that used the barrier instead, and those waiting now. A lower group flush must be supported and
 honoured by the complete storage stack. See [Microsoft's write-cache contract](https://learn.microsoft.com/en-us/windows-hardware/drivers/storage/querying-for-the-write-cache-property).
 The lower-I/O path continues to use ordinary writes and explicit group flushes.
 A read-only October 25 capability query reported write-through support on the VM's
