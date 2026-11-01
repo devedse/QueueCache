@@ -26,7 +26,10 @@ public static class PagingCoherenceScenarios
             after.WriteCompletions < before.WriteCompletions ||
             after.WriteCompletions - before.WriteCompletions != after.WriteRequests - before.WriteRequests ||
             after.WriteFailures != before.WriteFailures || after.OverlapWaits <= before.OverlapWaits)
-            throw new IOException("The mapped overwrite did not produce a successful observed paging/older-drain overlap.");
+            throw new IOException("The mapped overwrite did not produce a successful observed paging/older-drain overlap " +
+                $"(in flight {observedInFlight}; routed requests {before.WriteRequests}->{after.WriteRequests}, completions " +
+                $"{before.WriteCompletions}->{after.WriteCompletions}, failures {before.WriteFailures}->{after.WriteFailures}, " +
+                $"overlap waits {before.OverlapWaits}->{after.OverlapWaits}).");
         return $"Observed an isolated {SparseBytes}-byte older write in flight ({observedInFlight} bytes in flight in total), " +
             $"then {after.WriteRequests - before.WriteRequests} successful routed paging write(s) " +
             $"and {after.OverlapWaits - before.OverlapWaits} overlap wait(s). " +
@@ -528,8 +531,20 @@ public static class PagingCoherenceScenarios
                 view.WriteArray(patchOffset, b, 0, b.Length);
                 view.Flush();
             }
-            after = device.GetDiagnostics().PagingRoute ??
-                throw new IOException("Routed paging diagnostics disappeared during overlap.");
+            // The routed counters are device-wide: NTFS's own paging writes (busy right after a mount) may still be
+            // held by the lab delay when the mapped flush returns, and counting them mid-flight failed this check.
+            // Clear the delay and let every routed write that started finish before comparing (plan 222).
+            device.Control(WriteCacheAction.LabDelay, value: 0);
+            var settling = System.Diagnostics.Stopwatch.StartNew();
+            while (true)
+            {
+                after = device.GetDiagnostics().PagingRoute ??
+                    throw new IOException("Routed paging diagnostics disappeared during overlap.");
+                if (after.WriteCompletions - before.WriteCompletions == after.WriteRequests - before.WriteRequests ||
+                    settling.ElapsedMilliseconds > 10000)
+                    break;
+                Thread.Sleep(20);
+            }
         }
         finally
         {
