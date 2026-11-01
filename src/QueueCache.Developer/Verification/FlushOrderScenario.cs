@@ -940,10 +940,11 @@ public static class FlushOrderScenario
     // the backlog, so Windows' prepare-for-snapshot, which comes first with nothing held, now waits for the earlier groups
     // off the request worker. A lab delay of two seconds per lower write keeps sealed groups behind the snapshot; a later
     // write and read must complete meanwhile, and once the delay is cleared the snapshot must contain every earlier write.
+    // Its blocks start 256 KiB past the others: later checks still expect their own earlier patterns (plan 224).
     private static async Task<CheckResult> CheckSnapshotPreparationWaits(DiskTarget target, CacheDevice device, string path, string evidence)
     {
         const int groups = 40;
-        const long laterOffset = Offset + 48 * Block;
+        const long first = Offset + 64 * Block, laterOffset = first + 48 * Block;
         Reset(device);
         device.Control(WriteCacheAction.FlushOrder, value: On);
         ConfigurationManager.Apply(target, new CacheConfiguration(64, CachePreset.Fast)
@@ -961,7 +962,7 @@ public static class FlushOrderScenario
                 device.Control(WriteCacheAction.LabDelay, value: 2000);
                 for (var i = 0; i < groups; ++i)
                 {
-                    file.Write(Offset + i * Block, Pattern(24 + i));
+                    file.Write(first + i * Block, Pattern(24 + i));
                     file.Flush(); // Each flush seals one group from volatile RAM.
                 }
                 var before = device.GetDiagnostics();
@@ -999,7 +1000,7 @@ public static class FlushOrderScenario
                 // which flush-and-hold's barrier still drains.
                 var image = File.ReadAllBytes(ShadowCopies.PathIn(copy!, path));
                 for (var i = 0; i < groups; ++i)
-                    if (!image.AsSpan((int)(Offset + i * Block), Block).SequenceEqual(Pattern(24 + i)))
+                    if (!image.AsSpan((int)(first + i * Block), Block).SequenceEqual(Pattern(24 + i)))
                         throw new InvalidDataException($"The shadow copy lacks group {i}'s write.");
                 if (!image.AsSpan((int)laterOffset, Block).SequenceEqual(Pattern(64)))
                     throw new InvalidDataException("The shadow copy lacks the write made while its preparation waited.");
@@ -1021,7 +1022,7 @@ public static class FlushOrderScenario
         using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
         {
             for (var i = 0; i < groups; ++i)
-                AssertRead(file, Offset + i * Block, Pattern(24 + i));
+                AssertRead(file, first + i * Block, Pattern(24 + i));
             AssertRead(file, laterOffset, Pattern(64));
             AssertRead(file, laterOffset + Block, new byte[Block]);
         }

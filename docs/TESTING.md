@@ -205,7 +205,11 @@ delay per lower write and 40 sealed groups, a real shadow copy of the lab volume
 one preparation waiting off the worker (offloaded +1, none falling back, no barrier) while
 a later write and read complete within one second; after the delay is cleared the
 snapshot must be created, the frontier must have passed every earlier group, and the
-snapshot must hold all 40 writes and the later one. The shadow copy is deleted.
+snapshot must hold all 40 writes and the later one. The shadow copy is deleted. Plan 224
+(case `flush-order-v224`) moves those blocks 256 KiB past the others: on 0.4.921.1 the
+new check passed (preparation waiting with 40 groups unwritten, later write and read in
+0.0004 s, snapshot created 4.1 s after the request), but it had overwritten a block that
+the following TRIM step expects, which then failed its byte check.
 Plan 207 added eight paging-ordering checks to standalone `flush-order`. Plan 209 uses case `flush-order-v209`:
 seed boundary, stale layout token refusal, safe bypass while an older write is held, new-range learning,
 cached-write, disabled direct-write and TRIM invalidation, and zero safe overlaps. The explicit synthetic-paging
