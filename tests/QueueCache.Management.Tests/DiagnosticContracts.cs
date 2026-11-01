@@ -36,7 +36,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 222, "plan 222 settles routed paging writes before the observed-overlap comparison");
+        Check(VerificationPlan.Version == 223, "plan 223 lets a snapshot preparation wait off the request worker for earlier groups");
         var progressOptions = new VerificationOptions("W:", PagingReadProgressScenario.Suite, BudgetMiB: 256);
         VerificationPlan.Validate(progressOptions);
         Check(VerificationPlan.Integrity(progressOptions).Single().Id == "paging-read-progress-v215" &&
@@ -220,7 +220,7 @@ internal static class DiagnosticContracts
         Growth(3, 4, 0x80000005, 6, 1, 2);
         Check(CacheDiagnostics.Decode(growthWire).PageFileGrowth == new CachePageFileGrowth(3, 4, 0x80000005, 6, 1, 2) &&
             CacheDiagnostics.Decode(growthWire).OrderedFlushes == new CacheOrderedFlushes(7, 2, 1) &&
-            CacheDiagnostics.CurrentWireSize == CacheDiagnostics.PageFileGrowthWireSize, "V31 page-file growth field offsets");
+            CacheDiagnostics.Decode(growthWire).SnapshotPreparations is null, "V31 page-file growth field offsets");
         var growthVersion = (byte[])growthWire.Clone();
         BinaryPrimitives.WriteUInt32LittleEndian(growthVersion, 30);
         Reject(() => CacheDiagnostics.Decode(growthVersion));
@@ -228,6 +228,30 @@ internal static class DiagnosticContracts
         {
             Growth(3, 4, action, offloaded, 1, pending);
             Reject(() => CacheDiagnostics.Decode(growthWire));
+        }
+        // V32 (plan 223) appends the shadow-copy preparations that waited off the request worker.
+        Growth(3, 4, 0x80000005, 6, 1, 2);
+        var preparationWire = new byte[CacheDiagnostics.SnapshotPreparationWireSize];
+        growthWire.CopyTo(preparationWire, 0);
+        BinaryPrimitives.WriteUInt32LittleEndian(preparationWire, 32);
+        BinaryPrimitives.WriteUInt32LittleEndian(preparationWire.AsSpan(4), (uint)preparationWire.Length);
+        void Preparations(ulong offloaded, ulong fallbacks, ulong pending)
+        {
+            BinaryPrimitives.WriteUInt64LittleEndian(preparationWire.AsSpan(CacheDiagnostics.PageFileGrowthWireSize), offloaded);
+            BinaryPrimitives.WriteUInt64LittleEndian(preparationWire.AsSpan(CacheDiagnostics.PageFileGrowthWireSize + 8), fallbacks);
+            BinaryPrimitives.WriteUInt64LittleEndian(preparationWire.AsSpan(CacheDiagnostics.PageFileGrowthWireSize + 16), pending);
+        }
+        Preparations(5, 1, 1);
+        Check(CacheDiagnostics.Decode(preparationWire).SnapshotPreparations == new CacheSnapshotPreparations(5, 1, 1) &&
+            CacheDiagnostics.Decode(preparationWire).PageFileGrowth == new CachePageFileGrowth(3, 4, 0x80000005, 6, 1, 2) &&
+            CacheDiagnostics.CurrentWireSize == CacheDiagnostics.SnapshotPreparationWireSize, "V32 snapshot preparation field offsets");
+        var preparationVersion = (byte[])preparationWire.Clone();
+        BinaryPrimitives.WriteUInt32LittleEndian(preparationVersion, 31);
+        Reject(() => CacheDiagnostics.Decode(preparationVersion));
+        foreach (var (offloaded, pending) in new (ulong, ulong)[] { (0, 1), (9, 5) })
+        {
+            Preparations(offloaded, 0, pending);
+            Reject(() => CacheDiagnostics.Decode(preparationWire));
         }
         var seedWire = SpecialRangeMap.Encode([new DiskRange(4096, 8192)], SpecialRangeKind.SafePaging);
         Check(BinaryPrimitives.ReadUInt32LittleEndian(seedWire.AsSpan(12)) == 3 && seedWire.Length == 40,
@@ -544,11 +568,11 @@ internal static class DiagnosticContracts
             drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
         Reject(() => TelemetryCoverage.Validate(completeDrain.Where((_, i) => i is < 60 or > 63).ToArray(),
             drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
-        Check(VerificationPlan.Integrity(new("Q:", "flush-order")).SequenceEqual([new IntegrityCase("flush-order-v222", "flush-order")]) &&
+        Check(VerificationPlan.Integrity(new("Q:", "flush-order")).SequenceEqual([new IntegrityCase("flush-order-v223", "flush-order")]) &&
             VerificationPlan.InjectsLabFaults("flush-order"), "ordering suite runs only its owned checks and records deliberate fault recovery");
         var orderCampaign = VerificationCampaignPlan.Create(new(new("Q:", "quick", Repeats: 1), "experiment", "W:", FocusSuite: "flush-order", PauseBackingCache: true));
         Check(orderCampaign.Count == 1 && orderCampaign[0].Role == CampaignTargetRole.NtfsLab &&
-            orderCampaign[0].ExpectedCases.SequenceEqual(["flush-order-v222"]), "ordering experiment pauses the backing cache and targets only the disposable lab role");
+            orderCampaign[0].ExpectedCases.SequenceEqual(["flush-order-v223"]), "ordering experiment pauses the backing cache and targets only the disposable lab role");
         var orderRecovery = new RecoverySnapshot(1, new DiskTarget('Q', 99990, 8L << 30, "fixture"),
             new(0, 0, 8UL << 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), false, "[]", DateTimeOffset.UnixEpoch, "fixture", FlushOrderMode: 0);
         Check(VerificationWorker.RestorationMismatches(orderRecovery, orderRecovery.State, orderRecovery.State, "[]", 0,
@@ -644,6 +668,31 @@ internal static class DiagnosticContracts
             Reject(() => FlushOrderScenario.ValidateCopyOffloadRefused(prepareBefore, wrong, .001, 50, 50));
         foreach (var (seconds, read, write) in new[] { (double.NaN, 50, 50), (-1, 50, 50), (1.01, 50, 50), (.001, 0, 50), (.001, 50, 0), (.001, 1, 50) })
             Reject(() => FlushOrderScenario.ValidateCopyOffloadRefused(prepareBefore, prepareBefore, seconds, read, write));
+        // Plan 223: the snapshot preparation waits off the worker for sealed groups being written out, without a barrier,
+        // and the snapshot is created once the frontier passes them.
+        var snapshotBefore = flushBefore with { SnapshotPreparations = new(2, 0, 0) };
+        var snapshotPending = snapshotBefore with { SnapshotPreparations = new(3, 0, 1) };
+        var snapshotMoving = snapshotPending with { FlushOrder = snapshotPending.FlushOrder! with { DrainingEpoch = 2 } };
+        var snapshotDone = snapshotPending with { SnapshotPreparations = new(3, 0, 0), FlushOrder = new(1, 4, 4, 3, 3, 0, 0, 0, 4) };
+        FlushOrderScenario.ValidateSnapshotPreparationWaiting(snapshotBefore, snapshotPending, snapshotMoving, .003, snapshotWaiting: true);
+        FlushOrderScenario.ValidateSnapshotPreparationFinished(snapshotPending, snapshotDone, created: true);
+        // The 0.4.920.1 shape: no V32 counters; flush-and-hold then drained the backlog behind a barrier.
+        Reject(() => FlushOrderScenario.ValidateSnapshotPreparationWaiting(snapshotBefore with { SnapshotPreparations = null },
+            snapshotPending with { SnapshotPreparations = null }, snapshotMoving with { SnapshotPreparations = null }, .003, snapshotWaiting: true));
+        foreach (var (seconds, waiting) in new[] { (double.NaN, true), (-1, true), (1.01, true), (.003, false) })
+            Reject(() => FlushOrderScenario.ValidateSnapshotPreparationWaiting(snapshotBefore, snapshotPending, snapshotMoving, seconds, waiting));
+        foreach (var wrong in new[] { snapshotPending with { SnapshotPreparations = new(3, 1, 1) }, snapshotPending with { SnapshotPreparations = new(2, 0, 1) },
+            snapshotPending with { SnapshotPreparations = new(3, 0, 0) }, snapshotPending with { FlushOrder = snapshotPending.FlushOrder! with { DrainingEpoch = 3 } },
+            snapshotPending with { FlushOrder = snapshotPending.FlushOrder! with { Mode = 0 } },
+            snapshotPending with { OtherBarriers = snapshotPending.OtherBarriers + 1 } })
+            Reject(() => FlushOrderScenario.ValidateSnapshotPreparationWaiting(snapshotBefore, wrong, snapshotMoving, .003, snapshotWaiting: true));
+        Reject(() => FlushOrderScenario.ValidateSnapshotPreparationWaiting(snapshotBefore, snapshotPending,
+            snapshotMoving with { OtherBarriers = snapshotMoving.OtherBarriers + 1 }, .003, snapshotWaiting: true));
+        Reject(() => FlushOrderScenario.ValidateSnapshotPreparationFinished(snapshotPending, snapshotDone, created: false));
+        foreach (var wrong in new[] { snapshotDone with { SnapshotPreparations = new(3, 0, 1) }, snapshotDone with { SnapshotPreparations = new(4, 0, 0) },
+            snapshotDone with { SnapshotPreparations = new(3, 1, 0) }, snapshotDone with { FlushOrder = snapshotDone.FlushOrder! with { DrainingEpoch = 2 } },
+            snapshotDone with { FlushOrder = snapshotDone.FlushOrder! with { FlushFailures = 1 } } })
+            Reject(() => FlushOrderScenario.ValidateSnapshotPreparationFinished(snapshotPending, wrong, created: true));
         var offloadRead = FlushOrderScenario.DataSetRequest(0x80000003, 8192, 4096);
         var offloadWrite = FlushOrderScenario.DataSetRequest(4, 8192, 4096);
         Check(offloadRead.Length == 64 && BinaryPrimitives.ReadUInt32LittleEndian(offloadRead.AsSpan(4)) == 0x80000003 &&

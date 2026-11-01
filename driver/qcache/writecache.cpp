@@ -46,6 +46,7 @@ static void PagingReader(PVOID context);
 struct QC_PAGING_READ;
 static NTSTATUS RunAsyncTrim(QC_CACHE* c, const QC_PAGING_READ* entry);
 static NTSTATUS RunOrderedFlush(QC_CACHE* c, const QC_PAGING_READ* entry);
+static void RunSnapshotPreparation(QC_CACHE* c, const QC_PAGING_READ* entry);
 static NTSTATUS SendQueuedTrim(QC_CACHE* c, const DEVICE_DATA_SET_RANGE* ranges, ULONG count, ULONG flags, bool* sent);
 static void FinishAsyncTrim(QC_CACHE* c, ULONG fence, NTSTATUS status, bool sent = true);
 static bool TrimsOverlap(QC_CACHE* c, LONGLONG first, LONGLONG end);
@@ -176,6 +177,7 @@ static void Publish(QC_CACHE* c)
     c->Diagnostics.OrderedTrimsPending = c->QueuedTrims;
     c->Diagnostics.OrderedFlushesPending = c->OrderedFlushes;
     c->Diagnostics.PagingLearnPending = c->PagingLearners;
+    c->Diagnostics.SnapshotPreparationsPending = c->SnapshotPreparations;
     c->DiagnosticsSnapshot = c->Diagnostics;
     c->Performance.Version = 5;
     c->Performance.Size = sizeof(QC_PERFORMANCE);
@@ -858,7 +860,9 @@ static void ForwardControlItem(PDEVICE_OBJECT, PVOID context)
 }
 static constexpr NTSTATUS QcControlForwarded = STATUS_PENDING;
 static NTSTATUS OriginalIo(QC_CACHE* c, PIRP irp, bool allowReadService = true);
-static NTSTATUS ForwardControl(QC_CACHE* c, PIRP irp)
+// An offload thread (plan 223; it checked ReleaseRequest and Self) never takes the worker's waiting path: if the
+// work item cannot be allocated it calls the lower device itself, and the other threads serve any page-in meanwhile.
+static NTSTATUS ForwardControl(QC_CACHE* c, PIRP irp, bool onWorker = true)
 {
     if (!c->ReleaseRequest || !c->Self)
         return OriginalIo(c, irp);
@@ -868,13 +872,19 @@ static NTSTATUS ForwardControl(QC_CACHE* c, PIRP irp)
     {
         if (forward)
             ExFreePoolWithTag(forward, Tag);
-        return OriginalIo(c, irp); // Allocation failed: the previous, waiting path.
+        if (onWorker)
+            return OriginalIo(c, irp); // Allocation failed: the previous, waiting path.
     }
     const auto major = IoGetCurrentIrpStackLocation(irp)->MajorFunction;
     IoCopyCurrentIrpStackLocationToNext(irp);
     IoSetCompletionRoutine(irp, ForwardedControlCompletion, c, TRUE, TRUE, TRUE);
     InterlockedIncrement(&c->ControlsInFlight);
     QcCacheRecordLowerAttempt(c, major, irp);
+    if (!item)
+    {
+        IoCallDriver(c->Lower, irp);
+        return QcControlForwarded;
+    }
     forward->Item = item;
     forward->Lower = c->Lower;
     forward->Irp = irp;
@@ -1422,7 +1432,7 @@ static void Drainer(PVOID context)
                                          now - c->Slots[c->Head].DirtySince,
                                          now - c->LastWriteTime,
                                          c->Barrier || c->WriterWaiting || c->EpochWaiters || c->OrderedFlushes ||
-                                             c->PagingLearners,
+                                             c->PagingLearners || c->SnapshotPreparations,
                                          pressure);
         c->Pressure = pressure;
         const bool fenceDrain = c->RangeDrain && !c->RangeForward;
@@ -2133,9 +2143,11 @@ static bool LowerSupportsWriteThrough(QC_CACHE* c)
 // every later request, for the whole backlog: C: stopped for 386 s after a flush-heavy burst (cost
 // window R9). As the foreground owner, seal the open group, then let an offload thread wait for the
 // frontier. Ordering off, a paused or faulted cache, or no free entry: the barrier, as before.
-static bool OffloadOrderedFlush(QC_CACHE* c, PIRP irp)
+// A shadow-copy preparation (plan 223) waits the same way, then continues to volsnap; refused, it is
+// forwarded at once.
+static bool OffloadOrderedFlush(QC_CACHE* c, PIRP irp, bool preparation = false)
 {
-    if (!c->ReadThreads[0].Thread || !c->CompleteRequest)
+    if (!c->ReadThreads[0].Thread || !c->CompleteRequest || (preparation && (!c->ReleaseRequest || !c->Self)))
         return false;
     AcquireCache(c);
     if (!FlushOrdering(c) || !c->Enabled || !NT_SUCCESS(c->State.LastError) || c->Gone || c->Stop ||
@@ -2144,11 +2156,12 @@ static bool OffloadOrderedFlush(QC_CACHE* c, PIRP irp)
         ReleaseCache(c);
         return false;
     }
-    irp->IoStatus.Information = 0;
+    if (!preparation)
+        irp->IoStatus.Information = 0;
     QC_PAGING_READ* entry = nullptr;
     KIRQL irql;
     KeAcquireSpinLock(&c->PagingLock, &irql);
-    if (!c->PagingStop && c->OrderedFlushes < QcOrderedFlushMax)
+    if (!c->PagingStop && (preparation ? c->SnapshotPreparations : c->OrderedFlushes) < QcOrderedFlushMax)
         for (auto& read : c->PagingReads)
             if (!read.Irp)
             {
@@ -2163,6 +2176,7 @@ static bool OffloadOrderedFlush(QC_CACHE* c, PIRP irp)
         entry->Started = FALSE;
         entry->Write = entry->WriteThrough = entry->Trim = entry->Learn = FALSE;
         entry->Flush = TRUE;
+        entry->Forward = preparation;
         entry->Fence = 0;
         entry->Source = nullptr;
         entry->FlushEpoch = c->WriteEpoch;
@@ -2170,14 +2184,20 @@ static bool OffloadOrderedFlush(QC_CACHE* c, PIRP irp)
         // Not counted in PagingQueued, like an asynchronous TRIM: the caller path must not back off.
     }
     KeReleaseSpinLock(&c->PagingLock, irql);
-    if (entry)
+    if (entry && preparation)
+    {
+        ++c->SnapshotPreparations; // Before the thread can take Mutex to finish it.
+        ++c->Diagnostics.SnapshotPreparationsOffloaded;
+        WakeDrainers(c);
+    }
+    else if (entry)
     {
         ++c->OrderedFlushes; // Before the thread can take Mutex to finish it.
         ++c->Diagnostics.OrderedFlushesOffloaded;
         WakeDrainers(c);
     }
     else
-        ++c->Diagnostics.OrderedFlushFallbacks;
+        ++(preparation ? c->Diagnostics.SnapshotPreparationFallbacks : c->Diagnostics.OrderedFlushFallbacks);
     Publish(c);
     ReleaseCache(c);
     if (entry)
@@ -2189,9 +2209,9 @@ static bool OffloadOrderedFlush(QC_CACHE* c, PIRP irp)
 // and ordering turns off, only at a disabled boundary whose barrier first drained and flushed
 // everything (or at teardown). The final lower flush also covers writes that bypassed the cache, as
 // the barrier's does.
-static NTSTATUS RunOrderedFlush(QC_CACHE* c, const QC_PAGING_READ* entry)
+// Mutex held on entry and return: waits until the frontier reaches entry's group.
+static NTSTATUS WaitForFlushEpoch(QC_CACHE* c, const QC_PAGING_READ* entry)
 {
-    AcquireCache(c);
     while (FlushOrdering(c) && c->EpochResets == entry->FlushResets && c->DrainEpoch < entry->FlushEpoch &&
            NT_SUCCESS(c->State.LastError) && !c->Gone && !c->Stop)
     {
@@ -2203,7 +2223,12 @@ static NTSTATUS RunOrderedFlush(QC_CACHE* c, const QC_PAGING_READ* entry)
         KeWaitForSingleObject(&c->Changed, Executive, KernelMode, FALSE, &interval);
         AcquireCache(c);
     }
-    auto status = c->Gone ? STATUS_DEVICE_NOT_CONNECTED : c->Stop ? STATUS_DEVICE_NOT_READY : c->State.LastError;
+    return c->Gone ? STATUS_DEVICE_NOT_CONNECTED : c->Stop ? STATUS_DEVICE_NOT_READY : c->State.LastError;
+}
+static NTSTATUS RunOrderedFlush(QC_CACHE* c, const QC_PAGING_READ* entry)
+{
+    AcquireCache(c);
+    auto status = WaitForFlushEpoch(c, entry);
     ReleaseCache(c);
     if (NT_SUCCESS(status))
         status = LowerIo(c, IRP_MJ_FLUSH_BUFFERS);
@@ -2217,6 +2242,21 @@ static NTSTATUS RunOrderedFlush(QC_CACHE* c, const QC_PAGING_READ* entry)
     KeSetEvent(&c->Changed, IO_NO_INCREMENT, FALSE);
     ReleaseCache(c);
     return status;
+}
+// Offload thread (plan 223). After a flush-heavy burst, a shadow copy (restore point, backup, chkdsk /scan) froze C:
+// for about six minutes and then failed: the file system holds the volume while flush-and-hold's barrier writes out
+// the whole backlog, and Windows gave up. Its preparation comes first, with nothing held, so it waits here for the
+// groups before it and continues to volsnap whatever the outcome; flush-and-hold then finds only later writes, which
+// its barrier still drains. The worker keeps serving reads and writes meanwhile.
+static void RunSnapshotPreparation(QC_CACHE* c, const QC_PAGING_READ* entry)
+{
+    AcquireCache(c);
+    WaitForFlushEpoch(c, entry);
+    --c->SnapshotPreparations;
+    Publish(c);
+    KeSetEvent(&c->Changed, IO_NO_INCREMENT, FALSE);
+    ReleaseCache(c);
+    ForwardControl(c, entry->Irp, false); // The lower device completes it.
 }
 static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
 {
@@ -2556,7 +2596,7 @@ static bool OffloadPagingLearn(QC_CACHE* c, PIRP irp, LONGLONG first, LONGLONG e
         entry->Sequence = ++c->PagingSequence;
         entry->Started = FALSE;
         entry->Write = TRUE; // Overlapping reads wait for it, as for a write copy.
-        entry->WriteThrough = entry->Trim = entry->Flush = FALSE;
+        entry->WriteThrough = entry->Trim = entry->Flush = entry->Forward = FALSE;
         entry->Learn = TRUE;
         entry->Fence = 0;
         entry->Source = nullptr;
@@ -3144,7 +3184,7 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
             entry->Started = FALSE;
             entry->Write = TRUE;
             entry->WriteThrough = writeThrough;
-            entry->Trim = entry->Flush = entry->Learn = FALSE;
+            entry->Trim = entry->Flush = entry->Forward = entry->Learn = FALSE;
             entry->Source = source;
             RecordMaximum(&c->PagingOffloadMaxQueued, ++c->PagingQueued);
         }
@@ -3211,7 +3251,7 @@ static NTSTATUS FinishWrite(QC_CACHE* c, PIRP irp, LONGLONG offset, ULONG length
         WriteLimit(c), QcCachePagingPathCount(c) > 0, false);
     const bool pagingReservePressure = pagingIo && c->DirtySlots > ordinaryLimit;
     const bool forced = c->Barrier || c->WriterWaiting || c->EpochWaiters || c->OrderedFlushes || c->PagingLearners ||
-                        pagingReservePressure;
+                        c->SnapshotPreparations || pagingReservePressure;
     if (QcShouldWakeAfterWrite(c->Options, c->State.DirtyBytes, static_cast<ULONGLONG>(WriteLimit(c)) * Chunk,
                               c->LastWriteTime - c->Slots[c->Head].DirtySince, c->State.InFlightBytes,
                               forced, pressure) &&
@@ -3773,7 +3813,7 @@ bool QcCacheOffloadPagingRead(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, bool 
         entry->Sequence = ++c->PagingSequence;
         entry->Started = FALSE;
         entry->Write = entry->WriteThrough = FALSE;
-        entry->Trim = entry->Flush = entry->Learn = FALSE;
+        entry->Trim = entry->Flush = entry->Forward = entry->Learn = FALSE;
         entry->Source = nullptr;
         RecordMaximum(&c->PagingOffloadMaxQueued, ++c->PagingQueued);
     }
@@ -3861,6 +3901,15 @@ static void PagingReader(PVOID context)
             LARGE_INTEGER interval;
             interval.QuadPart = -1000000;
             KeWaitForSingleObject(&c->PagingWork, Executive, KernelMode, FALSE, learners ? &interval : nullptr);
+            continue;
+        }
+        if (next->Forward)
+        {
+            RunSnapshotPreparation(c, next); // Forwards the IRP: the lower device completes it.
+            KeAcquireSpinLock(&c->PagingLock, &irql);
+            next->Irp = nullptr;
+            KeReleaseSpinLock(&c->PagingLock, irql);
+            KeSetEvent(&c->PagingDone, IO_NO_INCREMENT, FALSE);
             continue;
         }
         auto irp = next->Irp;
@@ -4036,7 +4085,7 @@ static bool OffloadTrim(QC_CACHE* c, PIRP irp, ULONG fence, LONGLONG low, LONGLO
         entry->Started = FALSE;
         entry->Write = entry->WriteThrough = FALSE;
         entry->Trim = TRUE;
-        entry->Flush = entry->Learn = FALSE;
+        entry->Flush = entry->Forward = entry->Learn = FALSE;
         entry->Fence = fence;
         entry->Source = nullptr;
         // Not counted in PagingQueued: the caller path must not back off while a slow lower TRIM
@@ -4749,6 +4798,8 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
 // - write: waits only for offloaded reads overlapping its range, servicing
 //   independent reads meanwhile; ActiveWrite keeps new offloads out of its range;
 // - flush and read-only/observation controls: no slot retirement, no wait;
+// - volsnap's prepare-for-snapshot (queued only with ordering on): waits on an offload thread, then
+//   continues to volsnap (plan 223);
 // - everything else (QueueCache controls, TRIM, power, shutdown, PnP, usage,
 //   unknown controls) may retire pinned slots or change device state. It waits
 //   for all offloaded reads and blocks new offloads (the synchronous service
@@ -4811,6 +4862,13 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, bool* trans
         ReleaseCache(c);
         if (refuse)
             return STATUS_NOT_SUPPORTED; // Before any offload wait or barrier (plan 221).
+    }
+    // Queued here only with write ordering on (QcDispatch); never a barrier (plan 223).
+    if (control && stack->Parameters.DeviceIoControl.IoControlCode == QcVolsnapPrepareForSnapshot)
+    {
+        const auto status = OffloadOrderedFlush(c, irp, true) ? QcControlForwarded : ForwardControl(c, irp);
+        *transferred = status == QcControlForwarded;
+        return status;
     }
     if (major == IRP_MJ_FLUSH_BUFFERS || (control && (QcObservationRequest(stack) || !MediaChangingControl(irp, stack))))
         return Process(c, irp, deviceBytes);

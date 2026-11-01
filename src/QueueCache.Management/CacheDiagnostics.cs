@@ -79,9 +79,10 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public const int PagingOrderWireSize = 1416;
     public const int OrderedTrimWireSize = 1464;
     public const int OrderedFlushWireSize = 1488;
-    /// <summary>The newest version: the buffer callers offer, so the driver returns every known field.</summary>
     public const int PageFileGrowthWireSize = 1536;
-    public const int CurrentWireSize = PageFileGrowthWireSize;
+    /// <summary>The newest version: the buffer callers offer, so the driver returns every known field.</summary>
+    public const int SnapshotPreparationWireSize = 1560;
+    public const int CurrentWireSize = SnapshotPreparationWireSize;
     public CacheAttribution? Attribution { get; init; }
     public CacheUsagePaths? UsagePaths { get; init; }
     public CacheUsageActivities? UsageActivity { get; init; }
@@ -141,6 +142,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     /// <summary>V31 (plan 219): controls forwarded without draining and page-file learners that waited off the
     /// request worker.</summary>
     public CachePageFileGrowth? PageFileGrowth { get; init; }
+    /// <summary>V32 (plan 223): ordered Fast shadow-copy preparations that waited off the request worker.</summary>
+    public CacheSnapshotPreparations? SnapshotPreparations { get; init; }
     public static CacheDiagnostics Decode(ReadOnlySpan<byte> bytes)
     {
         var expectedVersion = bytes.Length switch
@@ -176,6 +179,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             OrderedTrimWireSize => 29u,
             OrderedFlushWireSize => 30u,
             PageFileGrowthWireSize => 31u,
+            SnapshotPreparationWireSize => 32u,
             _ => 0u
         };
         if (expectedVersion == 0 || BinaryPrimitives.ReadUInt32LittleEndian(bytes) != expectedVersion ||
@@ -426,6 +430,16 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
                 pageFileGrowth.LastBarrierAction > uint.MaxValue)
                 throw new InvalidDataException("Inconsistent page-file growth counters.");
         }
+        CacheSnapshotPreparations? snapshotPreparations = null;
+        if (bytes.Length >= SnapshotPreparationWireSize)
+        {
+            snapshotPreparations = new(BinaryPrimitives.ReadUInt64LittleEndian(bytes[PageFileGrowthWireSize..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(PageFileGrowthWireSize + 8)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(PageFileGrowthWireSize + 16)..]));
+            // At most QcOrderedFlushMax wait at once, each counted when it was offloaded.
+            if (snapshotPreparations.Pending > snapshotPreparations.Offloaded || snapshotPreparations.Pending > 4)
+                throw new InvalidDataException("Inconsistent snapshot preparation counters.");
+        }
         if (writeThroughGroups is { Available: > 1 })
             throw new InvalidDataException("Invalid write-through availability.");
         if (flushOrder is { Mode: > 2 } || flushOrder is { CurrentEpoch: 0 } or { DrainingEpoch: 0 } ||
@@ -465,7 +479,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             PagingOrder = pagingOrder,
             OrderedTrims = orderedTrims,
             OrderedFlushes = orderedFlushes,
-            PageFileGrowth = pageFileGrowth
+            PageFileGrowth = pageFileGrowth,
+            SnapshotPreparations = snapshotPreparations
         };
     }
 }
@@ -560,6 +575,11 @@ public sealed record CacheOrderedFlushes(ulong Offloaded, ulong Fallbacks, ulong
 /// LastBarrierAction and LearnPending.</summary>
 public sealed record CachePageFileGrowth(ulong PreparationsForwarded, ulong NotificationsForwarded, ulong LastBarrierAction,
     ulong LearnOffloaded, ulong LearnFallbacks, ulong LearnPending);
+/// <summary>V32 (plan 223), ordered Fast only: shadow-copy preparations (volsnap's prepare-for-snapshot) that waited for
+/// the groups written before them on an offload thread, leaving the request worker free, and then continued to volsnap;
+/// those forwarded at once because no offload entry was free or the cache was paused or faulted; and those waiting now.
+/// Lifetime counts except Pending.</summary>
+public sealed record CacheSnapshotPreparations(ulong Offloaded, ulong Fallbacks, ulong Pending);
 /// <summary>V28. Presence is the loaded driver's system-volume ordering capability. Clears counts invalidations; since
 /// plan 220 an overlapping write or TRIM removes only its part of the set (a full clear only on lifecycle events or when a
 /// split does not fit). Last clear reason:

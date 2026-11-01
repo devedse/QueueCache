@@ -173,6 +173,19 @@ static NTSTATUS Forward(QC_EXTENSION* ext, PIRP irp)
 #endif
     return IoCallDriver(ext->Lower, irp);
 }
+// See observation.h: with write ordering on, volsnap's prepare-for-snapshot takes the request worker's route,
+// which hands it to an offload thread to wait for the groups before it (plan 223).
+static bool QueuesSnapshotPreparation(QC_EXTENSION* ext, PIO_STACK_LOCATION stack)
+{
+#if QCACHE_CACHE_DRIVER
+    return stack->Parameters.DeviceIoControl.IoControlCode == QcVolsnapPrepareForSnapshot &&
+           ReadNoFence(&ext->Cache.FlushOrderMode) != 0;
+#else
+    UNREFERENCED_PARAMETER(ext);
+    UNREFERENCED_PARAMETER(stack);
+    return false;
+#endif
+}
 
 #if QCACHE_CACHE_DRIVER
 // Keeps the last non-data requests, overwriting the oldest, so the removal event shows what
@@ -1185,6 +1198,7 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             QC_DIAGNOSTICS diagnostics;
             QcCacheDiagnostics(&ext->Cache, &diagnostics);
             auto returned = outputLength >= sizeof(diagnostics) ? sizeof(diagnostics) :
+                outputLength >= QcDiagnosticsV31Size ? QcDiagnosticsV31Size :
                 outputLength >= QcDiagnosticsV30Size ? QcDiagnosticsV30Size :
                 outputLength >= QcDiagnosticsV29Size ? QcDiagnosticsV29Size :
                 outputLength >= QcDiagnosticsV28Size ? QcDiagnosticsV28Size :
@@ -1228,7 +1242,7 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
                 returned == QcDiagnosticsV24Size ? 24 : returned == QcDiagnosticsV25Size ? 25 :
                 returned == QcDiagnosticsV26Size ? 26 : returned == QcDiagnosticsV27Size ? 27 :
                 returned == QcDiagnosticsV28Size ? 28 : returned == QcDiagnosticsV29Size ? 29 :
-                returned == QcDiagnosticsV30Size ? 30 : 31;
+                returned == QcDiagnosticsV30Size ? 30 : returned == QcDiagnosticsV31Size ? 31 : 32;
             diagnostics.Size = static_cast<ULONG>(returned);
             RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &diagnostics, returned);
             IoReleaseRemoveLock(&ext->RemoveLock, irp);
@@ -1382,7 +1396,7 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
         return Forward(ext, irp);
     }
     if ((stack->MajorFunction == IRP_MJ_DEVICE_CONTROL || stack->MajorFunction == IRP_MJ_INTERNAL_DEVICE_CONTROL) &&
-        QcSnapshotControlWithoutDrain(stack->Parameters.DeviceIoControl.IoControlCode))
+        QcSnapshotControlWithoutDrain(stack->Parameters.DeviceIoControl.IoControlCode) && !QueuesSnapshotPreparation(ext, stack))
         return Forward(ext, irp); // See observation.h: shadow-copy controls after flush-and-hold.
 #if QCACHE_CACHE_DRIVER
     // Page-ins must never wait behind the worker: lower drivers can fault pages

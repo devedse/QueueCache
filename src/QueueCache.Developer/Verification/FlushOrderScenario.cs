@@ -15,7 +15,7 @@ namespace QueueCache.Developer.Verification;
 public static class FlushOrderScenario
 {
     private const int Block = 4096, MiB = 1 << 20, Offset = 4 * MiB;
-    public const int CheckCount = 18 + PagingOrderScenario.CheckCount, WriteThroughCheckCount = 11;
+    public const int CheckCount = 19 + PagingOrderScenario.CheckCount, WriteThroughCheckCount = 11;
     public const ulong On = 1, WriteThrough = 2;
 
     /// <summary>Mode 1 runs every check, including the per-cache setting. Lab mode 2 (#31) runs the driver
@@ -302,6 +302,7 @@ public static class FlushOrderScenario
                 checks.Add(await CheckFlushLeavesRequestsMoving(target, device, path, evidence));
                 checks.Add(await CheckPreparationNotDrained(target, device, path, evidence));
                 checks.Add(await CheckCopyOffloadRefused(target, device, path, evidence));
+                checks.Add(await CheckSnapshotPreparationWaits(target, device, path, evidence));
                 Apply(target, device, mode);
                 device.Control(WriteCacheAction.LabTrimMode, value: 3);
                 using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
@@ -660,6 +661,41 @@ public static class FlushOrderScenario
             throw new InvalidDataException("A data-set allocation query did not wait for the held group behind a recorded barrier.");
     }
 
+    private static CacheSnapshotPreparations Preparations(CacheDiagnostics d) =>
+        d.SnapshotPreparations ?? throw new InvalidDataException("Missing V32 snapshot-preparation evidence.");
+
+    /// <summary>Plan 223: while sealed groups were still being written out, Windows' prepare-for-snapshot waited for them on
+    /// an offload thread without a barrier, and a later write and read completed within a second meanwhile. Before plan 223
+    /// the preparation passed at once and flush-and-hold then wrote out the whole backlog while the file system held the
+    /// volume.</summary>
+    public static void ValidateSnapshotPreparationWaiting(CacheDiagnostics before, CacheDiagnostics pending, CacheDiagnostics moving,
+        double seconds, bool snapshotWaiting)
+    {
+        if (!double.IsFinite(seconds) || seconds < 0 || seconds > 1 || !snapshotWaiting)
+            throw new InvalidDataException("A later write and read did not complete within a second while the snapshot preparation waited.");
+        var a = Preparations(before);
+        var b = Preparations(pending);
+        var m = Preparations(moving);
+        var order = pending.FlushOrder ?? throw new InvalidDataException("Missing pending-preparation ordering evidence.");
+        if (order.Mode != On || b.Offloaded != a.Offloaded + 1 || b.Fallbacks != a.Fallbacks || b.Pending != 1 ||
+            m.Offloaded != b.Offloaded || m.Fallbacks != b.Fallbacks || m.Pending != 1 || order.DrainingEpoch >= order.CurrentEpoch ||
+            pending.OtherBarriers != before.OtherBarriers || moving.OtherBarriers != before.OtherBarriers)
+            throw new InvalidDataException("The snapshot preparation did not wait off the request worker for the earlier groups.");
+    }
+
+    /// <summary>Plan 223: the preparation continued once every group sealed before it was on the disk, and Windows created
+    /// the snapshot.</summary>
+    public static void ValidateSnapshotPreparationFinished(CacheDiagnostics pending, CacheDiagnostics after, bool created)
+    {
+        var b = Preparations(pending);
+        var c = Preparations(after);
+        var o = pending.FlushOrder ?? throw new InvalidDataException("Missing pending-preparation ordering evidence.");
+        var p = after.FlushOrder ?? throw new InvalidDataException("Missing post-snapshot ordering evidence.");
+        if (!created || c.Pending != 0 || c.Offloaded != b.Offloaded || c.Fallbacks != b.Fallbacks ||
+            p.FlushFailures != o.FlushFailures || p.DrainingEpoch < o.CurrentEpoch)
+            throw new InvalidDataException("The snapshot was not created after its preparation's earlier groups were on the disk.");
+    }
+
     /// <summary>Plan 221: with an earlier group held at the gate and another block unwritten, a copy-offload read and
     /// write were refused (ERROR_NOT_SUPPORTED) within a second without any barrier. Before plan 221 each wrote out
     /// every unwritten byte first and only then reached the disk.</summary>
@@ -897,6 +933,100 @@ public static class FlushOrderScenario
         }
         return new("flush-order/copy-offload-refused", "PASS",
             $"With an earlier group held and another block unwritten, a copy-offload read and write were refused (Win32 results {readError} and {writeError}) in {seconds:F3}s without a barrier. The held write, the unwritten block and an untouched neighbor matched after release.");
+    }
+
+    // Plan 223 (#32 probes: after a flush-heavy burst, a shadow copy of C: froze C: for about six minutes and then failed;
+    // restore points, backups and chkdsk /scan take one). The file system holds the volume while flush-and-hold writes out
+    // the backlog, so Windows' prepare-for-snapshot, which comes first with nothing held, now waits for the earlier groups
+    // off the request worker. A lab delay of two seconds per lower write keeps sealed groups behind the snapshot; a later
+    // write and read must complete meanwhile, and once the delay is cleared the snapshot must contain every earlier write.
+    private static async Task<CheckResult> CheckSnapshotPreparationWaits(DiskTarget target, CacheDevice device, string path, string evidence)
+    {
+        const int groups = 40;
+        const long laterOffset = Offset + 48 * Block;
+        Reset(device);
+        device.Control(WriteCacheAction.FlushOrder, value: On);
+        ConfigurationManager.Apply(target, new CacheConfiguration(64, CachePreset.Fast)
+        {
+            Options = new CacheOptions(Drain: DrainAlgorithm.Eager, BatchKiB: 4, Parallelism: 2, RetainWrites: false)
+        }, true);
+        double seconds, snapshotSeconds;
+        ShadowCopies.ShadowCopy? copy = null;
+        string shadowResult;
+        using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
+        {
+            Task<(ShadowCopies.ShadowCopy? Copy, uint? Failure)>? snapshot = null;
+            try
+            {
+                device.Control(WriteCacheAction.LabDelay, value: 2000);
+                for (var i = 0; i < groups; ++i)
+                {
+                    file.Write(Offset + i * Block, Pattern(24 + i));
+                    file.Flush(); // Each flush seals one group from volatile RAM.
+                }
+                var before = device.GetDiagnostics();
+                var clock = System.Diagnostics.Stopwatch.StartNew();
+                snapshot = Task.Run(() => (ShadowCopies.Create(target.Root, out var failure), failure));
+                CacheDiagnostics pending;
+                while ((pending = device.GetDiagnostics()).SnapshotPreparations is not { Pending: 1 })
+                {
+                    if (snapshot.IsCompleted || clock.Elapsed.TotalSeconds > 60)
+                        throw new IOException("Windows' snapshot preparation did not wait off the request worker for the earlier groups " +
+                            $"(offloaded {Preparations(pending).Offloaded - Preparations(before).Offloaded}, frontier " +
+                            $"{pending.FlushOrder?.DrainingEpoch} of {pending.FlushOrder?.CurrentEpoch}).");
+                    await Task.Delay(10);
+                }
+                var later = System.Diagnostics.Stopwatch.StartNew();
+                file.Write(laterOffset, Pattern(64));
+                AssertRead(file, laterOffset, Pattern(64));
+                seconds = later.Elapsed.TotalSeconds;
+                var moving = device.GetDiagnostics();
+                var snapshotWaiting = !snapshot.IsCompleted;
+                RunStorage.AtomicJson(evidence + ".snapshot-preparation-before.json", before);
+                RunStorage.AtomicJson(evidence + ".snapshot-preparation-pending.json", pending);
+                RunStorage.AtomicJson(evidence + ".snapshot-preparation-later.json",
+                    new { Diagnostics = moving, Seconds = seconds, SnapshotWaiting = snapshotWaiting });
+                ValidateSnapshotPreparationWaiting(before, pending, moving, seconds, snapshotWaiting);
+                device.Control(WriteCacheAction.LabDelay, value: 0);
+                (copy, var failure) = await snapshot;
+                snapshotSeconds = clock.Elapsed.TotalSeconds;
+                var after = device.GetDiagnostics();
+                shadowResult = copy is null ? $"FAILED {failure}" : copy.DeviceObject;
+                RunStorage.AtomicJson(evidence + ".snapshot-preparation-after.json",
+                    new { Diagnostics = after, Shadow = shadowResult, Seconds = snapshotSeconds });
+                ValidateSnapshotPreparationFinished(pending, after, copy is not null);
+                // The snapshot holds every write made before it: the groups the preparation waited for and the later write,
+                // which flush-and-hold's barrier still drains.
+                var image = File.ReadAllBytes(ShadowCopies.PathIn(copy!, path));
+                for (var i = 0; i < groups; ++i)
+                    if (!image.AsSpan((int)(Offset + i * Block), Block).SequenceEqual(Pattern(24 + i)))
+                        throw new InvalidDataException($"The shadow copy lacks group {i}'s write.");
+                if (!image.AsSpan((int)laterOffset, Block).SequenceEqual(Pattern(64)))
+                    throw new InvalidDataException("The shadow copy lacks the write made while its preparation waited.");
+            }
+            finally
+            {
+                device.Control(WriteCacheAction.LabDelay, value: 0);
+                // Join the owned snapshot before restoration and delete it; a failure already surfaced above.
+                if (snapshot is not null)
+                {
+                    await Task.WhenAny(snapshot);
+                    copy ??= snapshot.IsCompletedSuccessfully ? snapshot.Result.Copy : null;
+                }
+                if (copy is not null)
+                    ShadowCopies.Delete(copy.Id);
+            }
+        }
+        Reset(device);
+        using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
+        {
+            for (var i = 0; i < groups; ++i)
+                AssertRead(file, Offset + i * Block, Pattern(24 + i));
+            AssertRead(file, laterOffset, Pattern(64));
+            AssertRead(file, laterOffset + Block, new byte[Block]);
+        }
+        return new("flush-order/snapshot-preparation-leaves-requests-moving", "PASS",
+            $"With {groups} sealed groups still being written out, Windows' snapshot preparation waited for them off the request worker without a barrier; a later write and read completed in {seconds:F3}s meanwhile. Once the delay was cleared the shadow copy was created ({snapshotSeconds:F1}s after the request) and held every group's write and the later write; it was deleted. All writes and an untouched neighbor matched after release.");
     }
 
     // Raw volume controls for plans 219 and 221. The lower stack may refuse these requests (the result is recorded); the

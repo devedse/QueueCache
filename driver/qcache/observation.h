@@ -95,6 +95,11 @@ constexpr bool QcSnapshotControlWithoutDrain(ULONG code)
 static_assert(!QcSnapshotControlWithoutDrain(QcVolsnapFlushAndHoldWrites));
 static_assert(QcSnapshotControlWithoutDrain(0x53C004)); // IOCTL_VOLSNAP_RELEASE_WRITES, seen on the VM
 static_assert(QcSnapshotControlWithoutDrain(0x53C038)); // seen on the VM during a snapshot
+// Prepare-for-snapshot comes before the file system flushes and holds the volume for flush-and-hold. With write
+// ordering on, the request worker lets it wait off the worker for the groups before it (plan 223); otherwise it passes
+// like the controls above. volsnap creates its diff-area file meanwhile, so it must never wait on the worker.
+constexpr ULONG QcVolsnapPrepareForSnapshot = 0x53C008; // IOCTL_VOLSNAP_PREPARE_FOR_SNAPSHOT
+static_assert(QcSnapshotControlWithoutDrain(QcVolsnapPrepareForSnapshot));
 
 // Direct access (ramdirect.h): may the control pass while Direct access continues? Anything
 // else ends Direct access before it is forwarded; flush-and-hold ends only Direct writes

@@ -204,6 +204,10 @@ struct QC_DIAGNOSTICS
     // instead (paused or faulted cache, no free entry), and those waiting now.
     ULONGLONG CriticalIoPreparations, DataSetNotifications, LastBarrierAction;
     ULONGLONG PagingLearnOffloaded, PagingLearnFallbacks, PagingLearnPending;
+    // V32 (plan 223): ordered Fast shadow-copy preparations (volsnap's prepare-for-snapshot) that waited for the
+    // groups before them on an offload thread and then continued to volsnap, those forwarded at once instead (no
+    // free offload entry or thread, a paused or faulted cache), and those waiting now.
+    ULONGLONG SnapshotPreparationsOffloaded, SnapshotPreparationFallbacks, SnapshotPreparationsPending;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -235,7 +239,9 @@ static constexpr ULONG QcDiagnosticsV27Size = 1312;
 static constexpr ULONG QcDiagnosticsV28Size = 1416;
 static constexpr ULONG QcDiagnosticsV29Size = 1464;
 static constexpr ULONG QcDiagnosticsV30Size = 1488;
-static_assert(sizeof(QC_DIAGNOSTICS) == 1536);
+static constexpr ULONG QcDiagnosticsV31Size = 1536;
+static_assert(sizeof(QC_DIAGNOSTICS) == 1560);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, SnapshotPreparationsOffloaded) == QcDiagnosticsV31Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, CriticalIoPreparations) == QcDiagnosticsV30Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, OrderedFlushesOffloaded) == QcDiagnosticsV29Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, OrderedTrimsQueued) == QcDiagnosticsV28Size);
@@ -455,6 +461,8 @@ struct QC_PAGING_READ
     BOOLEAN Write, WriteThrough;
     BOOLEAN Trim; // Asynchronous lower TRIM of TrimFences[Fence]; ignored by range waits.
     BOOLEAN Flush; // Ordered explicit flush (plan 217): owns no range, so nothing waits for it.
+    // Also Flush: volsnap's prepare-for-snapshot (plan 223), forwarded instead of completed after the wait.
+    BOOLEAN Forward;
     // First write into a page-file range not yet known safe (plan 219, also Write): it waits in the table, without a
     // thread, until every group sealed before it is on the disk. Its range keeps overlapping requests out; it pins
     // nothing, so TRIMs and QueueCache's own controls do not wait for it.
@@ -526,6 +534,7 @@ struct QC_CACHE
     // at 1 (FreeSlots, mode change; only at a drained, disabled boundary or teardown).
     ULONG OrderedFlushes;
     ULONG PagingLearners; // Mutex: offloaded page-file learners not yet completed (plan 219).
+    ULONG SnapshotPreparations; // Mutex: offloaded shadow-copy preparations not yet forwarded (plan 223).
     ULONGLONG EpochResets;
     ULONGLONG CleanValidBytes[2];
     ULONGLONG ReadHitBytes, ReadMissBytes, Evictions, Generation, Instance, LastWriteTime;
