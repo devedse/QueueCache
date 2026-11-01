@@ -303,19 +303,20 @@ flush very often slow down once the cache fills. It applies to Fast only;
 Strict already waits for the disk, so Strict with ordering is refused. The Windows
 volume requires a matching loaded driver with Diagnostics V28. Older drivers are
 refused before draining, with an update message. In the C: tests on the VM
-([#32](https://github.com/devedse/QueueCache/issues/32), 0.4.910.1/0.4.912.1)
-ordering kept NTFS clean in six of seven power cuts, including one with page-file
-writes under memory pressure, while the same early-churn cut with ordering off
-damaged C:. The page-file growth cut could not be made and the scope decision is
-open, so the proven crash scope above remains NTFS data volumes. Hibernation, Fast
-Startup and physical power loss have not been qualified.
-A new paging-file range must wait until earlier saves reach the disk. A large queue
-of flush groups can therefore pause Windows during paging-file growth, even when
-the queued bytes fit in RAM. The growth itself waits too: the volume request NTFS
-sends before extending the page file is not recognized as read-only, so QueueCache
-first writes out everything unwritten and holds other C: requests meanwhile; Windows
-refuses memory requests that need the larger page file until then (up to 5 min with
-a lab-slowed write-out; [details](KNOWN_ISSUES.md#fast-mode-without-write-ordering-can-damage-the-file-system-in-a-crash)).
+([#32](https://github.com/devedse/QueueCache/issues/32)) ordering kept NTFS clean
+in all seven power-cut kinds: burst, write-through, early and late churn and
+checkpoint on 0.4.910.1, page-file writes under memory pressure and page-file growth
+on 0.4.917.1, while the same early-churn cut with ordering off damaged C:. The scope
+decision is open, so the proven crash scope above remains NTFS data volumes.
+Hibernation, Fast Startup and physical power loss have not been qualified.
+A write into a new paging-file range must wait until earlier saves reach the disk, so
+after a large queue of flush groups Windows' first page-outs into a grown page file
+wait for it, even when the queued bytes fit in RAM. Since plan 219 the volume request
+NTFS sends before extending the page file, and storage data-set notifications, pass
+straight down, so the page file grows at once. Before, QueueCache first wrote out
+everything unwritten while holding other C: requests, and Windows refused memory
+requests that needed the larger page file until then (up to 5 min with a lab-slowed
+write-out; [details](KNOWN_ISSUES.md#fast-mode-without-write-ordering-can-damage-the-file-system-in-a-crash)).
 The C: pressure check bounds its writer
 load; it does not establish responsiveness under a saturated flush backlog.
 

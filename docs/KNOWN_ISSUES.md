@@ -19,7 +19,7 @@ still to do. Open items link to their details.
 | Issue | Fixed | Build or status |
 |---|:-:|---|
 | [Fast mode without write ordering: a crash can damage the file system](#fast-mode-without-write-ordering-can-damage-the-file-system-in-a-crash) | ❌ | By design: write ordering stays off by default because programs that flush very often slow down. Qualified for NTFS data drives; the C: results are in the next row. See the fixed #13 row |
-| [Write ordering on C:](https://github.com/devedse/QueueCache/issues/32) | ❌ | Qualification tests done; the scope decision is open. Bounded live correctness passed on 0.4.897.1 to 0.4.909.1. The cost comparison found that a TRIM waiting behind a large save-point backlog held C: for 262 s (fixed in plan 216, validated), then that an explicit cache flush behind the same backlog held every C: request for 386 s; plan 217 lets that flush wait without holding other requests (validated on 0.4.909.1). The fresh cost comparison then passed: normal use 1.3% slower, memory pressure no slower, longest pause 0.32 s. Power cuts with ordering on (0.4.910.1/0.4.912.1): 6 of 7 passed with NTFS clean and untouched files exact; the page-file growth cut was not made in five attempts, because Windows did not grow the page file while the slowed write-out was behind. The same early-churn cut with ordering off damaged NTFS on C:. The release regression on 0.4.912.1 passed. Earlier coverage failures are retained. The app offers it only with a matching V28 driver. |
+| [Write ordering on C:](https://github.com/devedse/QueueCache/issues/32) | ❌ | Qualification tests done; all seven ordered C: cut kinds have passed; the scope decision is open. Bounded live correctness passed on 0.4.897.1 to 0.4.909.1. The cost comparison found that a TRIM waiting behind a large save-point backlog held C: for 262 s (fixed in plan 216, validated), then that an explicit cache flush behind the same backlog held every C: request for 386 s; plan 217 lets that flush wait without holding other requests (validated on 0.4.909.1). The fresh cost comparison then passed: normal use 1.3% slower, memory pressure no slower, longest pause 0.32 s. Power cuts with ordering on (0.4.910.1/0.4.912.1): 6 of 7 passed with NTFS clean and untouched files exact; the page-file growth cut was not made in five attempts, because Windows did not grow the page file while the slowed write-out was behind. Plans 219/220 (0.4.917.1) let page-file growth and its first writes proceed without holding C:; then the growth cut and the page-file cut passed and the cost comparison passed again (normal use and pressure no slower, longest pause 0.56 s). The same early-churn cut with ordering off damaged NTFS on C:. The release regression passed on 0.4.912.1 and 0.4.917.1. Earlier coverage failures are retained. The app offers it only with a matching V28 driver. |
 | [High-watermark pressure check stopped the plan-189 release campaign](#high-watermark-pressure-check-stopped-the-plan-189-release-campaign) | ❌ | Not reproduced, [#30](https://github.com/devedse/QueueCache/issues/30): two standalone runs and the complete plan-192 release campaign (11/11 phases, 106/106 cases, restored) passed it with exact counters; the original cause is unproven |
 | [The driver and installer are test-signed](#the-driver-is-test-signed) | ❌ | Production signing not done |
 | [Raw disk reads and writes bypass the cache](#raw-disk-reads-and-writes-bypass-the-cache-by-design) | ❌ | By design |
@@ -128,8 +128,9 @@ There were no cache errors or safe-range overlaps in the retained samples, but
 missing telemetry and completion records prevent a correctness/latency pass.
 Plan 210 caps the writer at two flushed writes/s with the original RAM pressure,
 duration, heartbeat limit and final-byte requirements. **A growing paging file
-can still pause Windows behind a large flush backlog.** The bounded test does not
-remove or qualify that limitation. C: reset qualification remains pending.
+could still pause Windows behind a large flush backlog** (fixed in plans 219/220,
+below). The bounded test did not remove or qualify that limitation. C: reset
+qualification remained pending.
 
 On 0.4.897.1 under Driver Verifier, all 22 targeted ordering checks completed
 and restored. The bounded plan-210 C: pressure check also completed and restored:
@@ -268,9 +269,9 @@ write reached the disk ahead of an earlier save point, and after the checkpoint
 every byte was exact. The newest churn files were sometimes zero-filled (size
 recorded, data not yet written), which NTFS allows. The page-file growth cut was not
 made in five attempts: the request Windows sends before growing the page file
-waited for the whole slowed write-out (see the limit below), so no reset happened
-and it qualifies nothing. 0.4.912.1 also retries a stale page-file layout when
-ordering is applied; one setup in eleven had lost that race and fallen back to
+waited for the whole slowed write-out (see below), so no reset happened
+and it qualifies nothing; after the fix it was made on 0.4.917.1. 0.4.912.1 also
+retries a stale page-file layout when ordering is applied; one setup in eleven had lost that race and fallen back to
 learning the ranges (slower, still safe). With Verifier off, the release regression
 on 0.4.912.1 completed all 11 phases and 106 cases, and all 94 correctness checks
 passed.
@@ -284,34 +285,78 @@ back to its snapshot with the owner's approval (scan clean and guard files exact
 afterwards). On this VM, ordering prevented the C: damage that the default mode
 caused. Whether to recommend it on C: is the owner's decision in #32; it stays off
 by default. Not covered: hibernation and Fast Startup (the VM cannot hibernate),
-physical power loss, other file systems, BitLocker, drain settings other than the
-two tested profiles, and a crash during page-file growth.
+physical power loss, other file systems, BitLocker, and drain settings other than
+the two tested profiles. A crash during page-file growth has one passing cut
+(0.4.917.1, below).
 
 **Remaining limit (ordering on):** other full barriers still hold every request
-until the whole backlog is on the disk: a page-file write outside the learned safe
-ranges, a media-changing control, removal, shutdown. After a flush-heavy burst
-that backlog takes minutes at one lower flush per save point (300 to 700 per second
-in these windows). The cost windows record no such barrier after the burst, but they do not
-show it cannot happen.
+until the whole backlog is on the disk: a media-changing control (including storage
+data-set requests other than TRIM and notifications), removal, shutdown, and a
+page-file write outside the learned safe ranges when all 32 learner slots are busy.
+After a flush-heavy burst that backlog takes minutes at one lower flush per save point
+(300 to 700 per second in these windows). The cost windows record no such barrier after
+the burst, but they do not show it cannot happen. Since plan 219 a page-file write into
+a new range no longer holds other requests, but that write itself still waits for the
+backlog.
 
-**Page-file growth waits for the write-out (diagnosed 2026-10-31, not fixed):** before
-Windows extends the page file, NTFS sends a volume request (control code 0x56C04C,
-volume function 19). It needs write access, so QueueCache treats it as possibly
-changing the disk: it first writes out everything unwritten while holding its single
-request worker, so other C: requests queue behind it, and then drops the clean read
-cache. Until that finishes the page file cannot grow, and Windows refuses memory
-requests that need it. With the 200 ms lab delay this lasted 42 to 67 s in the growth
-cuts, and about 5 min 17 s (until the page file grew) in a repeat without a reset;
-free commit stayed at 2 to 12 MiB,
-and a remote shell and a monitoring process failed meanwhile. Once it ended the page
-file grew in 1 GiB steps every 2 to 4 s. The one cut whose page file grew at once had
-no backlog left. Storage data-set requests other than a plain TRIM (control 0x2D9404)
-take the same path: 21 s in a cost window without the lab delay. Without the lab
-delay the hold lasts as long as writing out the backlog: well under a second in the
-measured steps, but minutes right after a flush-heavy burst (writing out 190,000
-groups took 8 min 22 s in R10). With ordering off the same request also waits, but the unordered
-write-out normally takes seconds; the ordering-off runs that grew the page file at
-once had no lab delay, so they were not a like-for-like comparison.
+**Page-file growth waited for the write-out (diagnosed 2026-10-31, fixed in plans
+219/220):** before Windows extends the page file, NTFS sends a volume request
+(control code 0x56C04C, volume function 19). It needs write access, so QueueCache
+treated it as possibly changing the disk: it first wrote out everything unwritten
+while holding its single request worker, so other C: requests queued behind it, and
+then dropped the clean read cache. Until that finished the page file could not grow,
+and Windows refused memory requests that needed it. With the 200 ms lab delay this
+lasted 42 to 67 s in the growth cuts, and about 5 min 17 s (until the page file grew)
+in a repeat without a reset; free commit stayed at 2 to 12 MiB, and a remote shell
+and a monitoring process failed meanwhile. Once it ended the page file grew in 1 GiB
+steps every 2 to 4 s. The one cut whose page file grew at once had no backlog left.
+Storage data-set requests other than a plain TRIM (control 0x2D9404) took the same
+path: 21 s in a cost window without the lab delay. Without the lab delay the hold
+lasted as long as writing out the backlog: well under a second in the measured
+steps, but minutes right after a flush-heavy burst (writing out 190,000 groups took
+8 min 22 s in R10). With ordering off the same request also waited, but the
+unordered write-out normally takes seconds; the ordering-off runs that grew the page
+file at once had no lab delay, so they were not a like-for-like comparison.
+
+**Fix (plans 219/220, 0.4.917.1):** the page-file preparation request and storage
+data-set notifications, which change nothing on the disk, now pass straight down in
+either mode (counted in diagnostics V31); other data-set actions still write out first
+and record their action. With ordering on, the first write into a page-file range not
+yet learned (a new extent) waits on an offload thread until every earlier save is on
+the disk, is then written and flushed, and its range is learned; the request worker
+keeps serving other requests meanwhile (up to 32 such writes, beyond that the old
+barrier). A TRIM or write that overlaps a learned range now removes only the
+overlapping part: a page-file shrink used to empty the whole set, so every later
+page-out had to wait for the backlog. Under Verifier with the 200 ms lab delay the
+memory limit rose about 2 s after pressure started (318 s before), a 12 GiB allocation
+succeeded in about 12 s with no refusals (81.5 s and 56 refusals before), the request
+worker's longest hold was 0.09 s (290 s before) and the heartbeat's longest pause
+0.24 s, also while Windows shrank the page file.
+
+Power cuts on 0.4.917.1 (Verifier on, ordering on, a fresh snapshot): the page-file
+growth cut was made for the first time. The page file had grown from 1 to 2.5 GiB, a
+write into the new extent was waiting for earlier saves and the deletion of 2,000
+marker files was still in RAM. After the reset `chkdsk /scan` was clean, no NTFS
+warning or error was logged, the guard was exact and all 2,000 markers were intact.
+The page-file cut was repeated on the new code with 4,266 page-file writes past the
+queue: the newest files were only missing or zero-filled, no file held other data,
+the scan was clean and the guard exact. Each passed on its second attempt. The
+first growth attempt did not reset because the page file grew without a write into
+the new extent (an earlier warm-up had left room); the first page-file attempt did
+not reset because the backlog had drained only to 41% at the deadline, so the second
+used a 150 ms lab delay instead of 200 ms.
+
+The cost comparison was repeated on 0.4.917.1 (R11, Verifier off, one off/on/off
+window) and passed: normal use 113.4 s against an off mean of 113.6 s, memory pressure
+311.3 s against 311.9 s, longest pressure pause 0.564 s, no unidentified page-file
+write. After the flush-heavy step (1,305 MiB) the arm's explicit flush waited 3 min
+35 s off the request worker while the heartbeat's longest pause stayed 0.206 s.
+With Verifier off, `release-performance` on 0.4.917.1 completed and restored all 11
+phases and 106 cases, and all 94 correctness checks passed. All seven ordered cut
+kinds have now passed, the cost comparison passed and the release completed, which
+is the outcome the qualification plan declared in advance as "allowed on C:, still
+off by default". Five of the seven cuts (burst, write-through, early and late churn,
+checkpoint) ran on driver code before plans 219/220 and were not repeated.
 
 
 - **Checks:** 14/14 targeted live-driver checks passed under Driver Verifier on
@@ -758,6 +803,21 @@ written, and everything else reads back exactly.
 Correctness checks and their evidence. Performance evidence is in [performance](PERFORMANCE.md).
 
 ### Correctness qualification
+
+**Issue #32, page-file fixes and their qualification (2026-10-31/11-01):** plans
+219/220 on 0.4.917.1. Under Verifier `0x209bb` the targeted campaign completed and
+restored 6/6 phases with all 94 retained checks and 26/26 ordering checks, including
+page-file preparation passing a held group, a new-range page-file write leaving other
+requests moving (0.002 s) and overlaps removing only the touched safe range; the
+bounded C: pressure check passed (128 files exact, heartbeat 0.228 s). With ordering on
+and a fresh snapshot, the page-file growth cut (made for the first time) and the
+page-file cut passed: `chkdsk /scan` 0, no NTFS warning or error, guard exact, all
+2,000 growth markers intact, recent files only missing or zero-filled. With Verifier
+off the cost window R11 passed and `release-performance` completed and restored 11/11
+phases, 106/106 cases and 94 retained checks; `verify-completion` accepted it. Loaded
+hashes were checked; every evidence export was independently hash-verified. The
+snapshot was deleted (no failure), and original settings, apps and services were
+restored.
 
 **Issue #32, C: power cuts and final regression (2026-10-31):** under Verifier
 `0x209bb` with ordering on, six of the seven planned C: VM-reset cuts passed: burst,
