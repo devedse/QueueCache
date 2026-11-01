@@ -22,7 +22,7 @@ Contents: [Decisions](#current-decisions-and-when-to-repeat-tests) ·
 | Topic | Decision | Reopen when |
 |---|---|---|
 | Fast write ordering (#13) | **Keep ordering default off. The ordinary mode is the former lab mode 3; a separate forced-write lab mode is measured below.** Mode 2 had made applications slower (plan 194: flushed small files 2.5×, write-through pairs 43×) because every write and bookmark woke all drain threads, which then searched the whole backlog while holding the cache lock (plan 195). The current mode searches only the group it may write now and wakes the threads only for that group. Plan 196 on release 0.4.865.1: writing into the cache took the same time with ordering on and off for a 1.5 GiB file that fits the cache (about 0.2–0.3 s), 25,600 flushed files (about 9 s) and 25,600 write-through pairs (about 0.25 s). Reaching the disk is still slow with ordering on, because each bookmark needs its own disk flush: about **7×** as long as off for files and **54×** for pairs. That only matters for nonstop flush-heavy writing (plan 197): flushing every small file for five minutes filled the 2 GiB cache after about 1.5 minutes, after which the application ran at about 230 files/s instead of about 2,000; `tar` and `robocopy` on a 16,000-file tree showed no difference. [Sustained result](#fast-ordering-13-sustained), [single-mode result](#fast-ordering-13-single), [fix](#fast-ordering-13-fix), [minute-scale result](#fast-ordering-13-minute). The plan-203 forced-write lab variant on a temporary virtual SCSI disk shortened flush-heavy durable completion by **8.8% for files and 7.2% for pairs**, with every pair improved and separated ranges; measured group-flush calls were only about 5–6% of the ordinary mode's total time. [B result](#fast-ordering-31-fua). Its complete sustained comparison still filled and throttled the cache, with five-minute application throughput −0.33%, +3.62%, +2.59% against ordinary ordering and no tree application benefit. [Sustained B result](#fast-ordering-31-fua-sustained). The current ordinary mode passed 14/14 targeted checks under Verifier and six bounded NTFS data-volume VM-reset scenarios plus a middle-drain repeat on 0.4.882.1; the ordering-off early-churn control damaged NTFS. Broader power-loss and system-volume scope remains unqualified. The [final plan-206 release campaign](#release-206) completed/restored all 11 phases, 106 cases and 94 retained checks on the unchanged 0.4.882.1 native pair. Earlier [preparation/clock failures](#release-203-read-preparation) remain separate. #13 was closed for the tested NTFS data-volume VM-reset scope on 2026-10-28 and the "experimental" label removed; the default stays off and broader limits are unchanged. | A default-on decision, a flush-heavy application that matters to users, fewer or cheaper disk flushes per bookmark, remaining bypass/crash qualification, a new storage contract, or group retention/flush scheduling changes. No global or system-volume safety claim. |
-| Windows-drive ordering (#32) | **Qualification tests done; default off; the owner decides the scope.** Bounded live correctness passed on 0.4.897.1 to 0.4.909.1. Earlier cost attempts were incomplete: on 0.4.906.1 the on arm lost 262 s after its flush-heavy step because a TRIM waited behind about 190,000 save points and held NTFS (plan 216 fixed it, validated on 0.4.907.1). On 0.4.907.1 its measured steps were not slower than off, but the arm's own explicit cache flush then held every C: request for 386 s behind the same backlog; plan 217 waits for it off the request worker. On 0.4.909.1 the fresh window R10 passed the cost gate: normal use +1.3%, pressure no slower, longest pause 0.32 s, flush-heavy 485 against 1,289/1,469 files/s (report only), and that flush no longer stalled C: (0.21 s). With ordering on, six of seven C: power cuts passed (0.4.910.1/0.4.912.1); the page-file growth cut was not made in five attempts, because the volume request sent before page-file growth (0x56C04C) was treated as possibly changing the disk and waited for the whole write-out ([diagnosis](KNOWN_ISSUES.md#fast-mode-without-write-ordering-can-damage-the-file-system-in-a-crash)). Plans 219/220 (0.4.917.1) forward that request and data-set notifications, let the first write into a new page-file range wait off the request worker, and remove only the touched part of the safe page-file set. On 0.4.917.1 the growth cut was made and passed, the page-file cut passed again (the other five cut kinds passed on 0.4.910.1 and were not repeated), and R11 passed the cost gate: normal use 0.1% faster, pressure no slower, longest pause 0.56 s, flush-heavy 430 against 1,589/1,577 files/s (report only), its flush waited 3 min 35 s with a 0.21 s pause. The same early-churn cut with ordering off damaged NTFS on C:. The release regressions on 0.4.912.1 and 0.4.917.1 completed (measurements only). [Cost attempts](#c-ordering-cost-observer-32). The unbounded pressure writer under a 100 ms lab delay stalled Windows when a new paging range waited for about 2,400 save points. The bounded fixture does not qualify saturated-backlog responsiveness. [Finding](#c-paging-under-an-artificial-drain-delay-32-october-29). | The owner decides the C: scope. Do not rerun R11 or the cuts unless the driver, workload or measurement contract changes. Revisit full-backlog latency only for the remaining full barriers (media-changing controls other than notifications, removal, shutdown, all 32 page-file learner slots busy); do not treat a bounded-fixture pass as resolving them. |
+| Windows-drive ordering (#32) | **Qualification tests done; default off; the owner decides the scope.** Bounded live correctness passed on 0.4.897.1 to 0.4.909.1. Earlier cost attempts were incomplete: on 0.4.906.1 the on arm lost 262 s after its flush-heavy step because a TRIM waited behind about 190,000 save points and held NTFS (plan 216 fixed it, validated on 0.4.907.1). On 0.4.907.1 its measured steps were not slower than off, but the arm's own explicit cache flush then held every C: request for 386 s behind the same backlog; plan 217 waits for it off the request worker. On 0.4.909.1 the fresh window R10 passed the cost gate: normal use +1.3%, pressure no slower, longest pause 0.32 s, flush-heavy 485 against 1,289/1,469 files/s (report only), and that flush no longer stalled C: (0.21 s). With ordering on, six of seven C: power cuts passed (0.4.910.1/0.4.912.1); the page-file growth cut was not made in five attempts, because the volume request sent before page-file growth (0x56C04C) was treated as possibly changing the disk and waited for the whole write-out ([diagnosis](KNOWN_ISSUES.md#fast-mode-without-write-ordering-can-damage-the-file-system-in-a-crash)). Plans 219/220 (0.4.917.1) forward that request and data-set notifications, let the first write into a new page-file range wait off the request worker, and remove only the touched part of the safe page-file set. On 0.4.917.1 the growth cut was made and passed, the page-file cut passed again (the other five cut kinds passed on 0.4.910.1 and were not repeated), and R11 passed the cost gate: normal use 0.1% faster, pressure no slower, longest pause 0.56 s, flush-heavy 430 against 1,589/1,577 files/s (report only), its flush waited 3 min 35 s with a 0.21 s pause. The same early-churn cut with ordering off damaged NTFS on C:. The release regressions on 0.4.912.1 and 0.4.917.1 completed (measurements only). [Cost attempts](#c-ordering-cost-observer-32). The unbounded pressure writer under a 100 ms lab delay stalled Windows when a new paging range waited for about 2,400 save points. The bounded fixture does not qualify saturated-backlog responsiveness. [Finding](#c-paging-under-an-artificial-drain-delay-32-october-29). Plans 221–224 (0.4.919.1–0.4.922.1): an enabled cache refuses copy offload, so a copy no longer waits for the write-out, and a shadow copy's preparation waits off the request worker, so restore points, backups and `chkdsk /scan` no longer hold C: until the backlog is on the disk (before, they failed after about 6 minutes with C: held). [Operations with a backlog](KNOWN_ISSUES.md#fast-mode-without-write-ordering-can-damage-the-file-system-in-a-crash). Final off-versus-on comparison ([result](#c-ordering-final-32)): new data goes into the cache as fast as with ordering off; overwriting data from before a file-system flush keeps old versions, so CrystalDiskMark writes were 27% to 98% lower (reads unchanged); reaching the disk took 7× as long for flushed files and 57× for write-through pairs; five minutes of flushed files completed 2.7–4× fewer files; `tar` and `robocopy` unchanged. `release-performance` on the final build 0.4.923.1 completed 106/106 cases with 94/94 retained checks. | The owner decides the C: scope. Do not rerun R11, the cuts or the final comparison unless the driver, workload or measurement contract changes. Revisit full-backlog latency only for the remaining full barriers (media-changing controls other than notifications, removal, shutdown, `chkdsk /f`, defragmentation's allocation queries on thin-provisioned disks, all 32 page-file learner slots busy); do not treat a bounded-fixture pass as resolving them. Revisit the CrystalDiskMark write cost only with a change to how old versions are kept. |
 | Changed-region image checkpoints (#28) | Keep eligible older-candidate reuse with full read-back and safe full-save fallback. A small change to half-filled 1 GiB images saved **21–22% elapsed time** in the short plan-182 observation. **Mostly empty images have no consistent time gain** in plans 180/181. Protect current/original images and explicit exports. [Evidence](#checkpoint-reuse-28). | Changes to payload mapping, source hashing, verification, candidate ownership or host storage, or a materially different image size/occupancy. These are single observations; logical-byte reduction alone does not establish physical I/O or general speed gains. |
 | Asynchronous split RAM-disk reads | **Accepted, default adaptive** (1M Q8T1 +79.84%; Q1 and four readers unchanged). | Changes to provider workers, the Direct read path or chunking; a `ram-read-async` or `ram-read-async-lifecycle` regression. |
 | Cached read-hit bookkeeping (copy flag 4) | **Accepted, default on** (1M Q8T1 +7.92%, Q1T1 +4.52%, four readers +3.46%). | Changes to the read-hit path, pinning, recency lists or the slot index; a `cache-read-bookkeeping` regression. |
@@ -120,6 +120,103 @@ state. PrimoCache also has a post-run Ceph near-full warning; its onset and
 effect are unknown; the warnings cleared after restoration. Controls and exact runs are in the decisions table and the sections below.
 
 ## Results, newest first
+
+<a id="c-ordering-final-32"></a>
+### Write ordering off versus on, final build (#32, November 1)
+
+At the owner's request, write ordering off and on were compared on the final build
+in the areas tested before: CrystalDiskMark, time until written data is on the disk,
+five minutes of flush-heavy work, and Windows operations with a backlog. Same VM,
+Verifier off, Fast 2 GiB, Eager 2048 KiB × 8 (the default), runtime-only profiles.
+CrystalDiskMark ran on 0.4.922.1, everything else on 0.4.923.1; between them only the
+verification runner changed. Ordering is meant to keep NTFS consistent after a crash;
+these numbers are its price.
+
+| Area | Ordering off | Ordering on |
+|---|---|---|
+| CrystalDiskMark reads | 1,116–32,227 MB/s | Same |
+| CrystalDiskMark writes | 921–16,215 MB/s | **27% to 98% lower** |
+| Writing new data into the cache | 0.18 s (1.5 GiB), 8.3 s (25,600 flushed files), 0.23 s (25,600 write-through pairs) | About the same |
+| Until that data is on the disk | 7.7 s, 8.4 s, 0.90 s | 7.9 s, **58.8 s (7×)**, **51.1 s (57×)** |
+| Five minutes of flushed 4 KiB files | 1,983 / 2,872 files/s | **744 / 720 files/s**, then 8 more minutes to reach the disk |
+| `tar` and `robocopy`, 16,000 files | 3.3–5.9 s, on disk in 8.8–10.3 s | Same |
+
+**CrystalDiskMark** (Q:, off / on / off in one window, README method: cache emptied
+before each All run, both runs shown for the ordered arm; MB/s):
+
+| Test | Off (before) | On, run 1 | On, run 2 | Off (after) |
+|---|---:|---:|---:|---:|
+| SEQ1M Q8T1 read | 32,227 | 30,975 | 36,162 | 28,672 |
+| SEQ1M Q1T1 read | 17,946 | 17,831 | 18,362 | 16,392 |
+| RND4K Q32T1 read | 1,424 | 1,356 | 1,393 | 1,378 |
+| RND4K Q1T1 read | 1,139 | 1,118 | 1,134 | 1,116 |
+| SEQ1M Q8T1 write | 16,215 | 6,433 | 1,684 | 15,927 |
+| SEQ1M Q1T1 write | 11,092 | 3,511 | 1,295 | 11,091 |
+| RND4K Q32T1 write | 1,262 | 902 | 290 | 1,208 |
+| RND4K Q1T1 write | 921 | 182 | 22 | 928 |
+
+Both ordered runs started with an empty cache; the two unordered columns agree, so the
+drop is not drift. To find out why, CrystalDiskMark's four write tests were repeated
+once each with its own DiskSpd settings (unbuffered, not write-through) on one 1 GiB
+file, with the cache counters read after each step (0.4.923.1, MiB/s):
+
+| Step | Off | On | On: kept old versions | On: waits for cache space |
+|---|---:|---:|---:|---:|
+| SEQ1M Q8T1 write | 14,847 | 10,570 | 473,600 | 574 |
+| SEQ1M Q1T1 write | 10,308 | 4,471 | 732,928 | 300 |
+| RND4K Q32T1 write | 1,155 | 903 | 331,519 | 1,306 |
+| RND4K Q1T1 write | 877 | 238 | 207,392 | 11,418 |
+| Final cache flush | 12.4 s | 60.7 s | | |
+
+NTFS flushes the test file once or twice per test. With ordering on, each of those
+flushes closes a save point that holds most of the file, and every later overwrite of
+a block from before it must keep the old version until that version is on the disk.
+The cache fills with old versions and writes then wait for the ordered write-out.
+That is how ordering works, not a defect: each saved state must reach the disk in
+order. CrystalDiskMark overwrites the same file for five passes per test, so its
+drop is larger than the single pass's. Programs that write new data, such as the
+copies and file trees below, do not pay this.
+
+**Time until on the disk** (`flush-order-cost`, lab NTFS volume, three alternating
+repeats, medians in seconds; COMPLETED 18/18 cases, restored, `verify-completion`
+accepted; no case waited for cache space):
+
+| Workload | Off: into the cache | On: into the cache | Off: on the disk | On: on the disk |
+|---|---:|---:|---:|---:|
+| New 1.5 GiB file | 0.181 | 0.223 | 7.70 | 7.85 |
+| 25,600 new 4 KiB files, each flushed | 8.33 | 8.30 | 8.39 | 58.79 |
+| 25,600 write-through pairs | 0.234 | 0.236 | 0.90 | 51.05 |
+
+The same as plan 196 on 0.4.865.1 (7× and 54×): each save point needs its own lower
+flush.
+
+**Five minutes of use** (`flush-order-sustained`, two repeats, the first off first and
+the second on first; 1/1 PASS, restored, `verify-completion` accepted):
+
+| Workload | Off | On |
+|---|---|---|
+| Flushed 4 KiB files for 5 min | 594,861 / 861,698 files; on the disk 1.3 / 1.5 s after | 223,232 / 215,913 files; 149,289 / 125,639 waits for cache space; on the disk 495 / 486 s after |
+| `tar` extract, 16,000 files (1,328 MiB) | 3.30 / 3.44 s; on the disk 10.0 / 8.8 s | 3.40 / 3.38 s; 10.2 / 10.0 s |
+| `robocopy` tree, 16,000 files | 5.94 / 5.40 s; 10.3 / 10.1 s | 5.68 / 5.92 s; 10.6 / 10.8 s |
+
+The unordered arms differ by 45% between repeats (backend drift). Plan 197 measured
+about 230 against 2,000 files/s; the ordered arm now keeps about 720–744.
+
+**Windows operations with a backlog:** after plans 221 and 223 a copy no longer waits
+for the write-out, and a shadow copy (restore points, backups, `chkdsk /scan`) waits
+for it without holding C:; `chkdsk /f`, defragmentation of a thin-provisioned disk and
+a restart still wait for it. [Probe results](KNOWN_ISSUES.md#fast-mode-without-write-ordering-can-damage-the-file-system-in-a-crash).
+
+**Release regression on 0.4.923.1** (plan 225, Verifier off): `release-performance`
+completed and restored 11/11 phases and 106/106 cases, `verify-completion` accepted,
+94/94 retained correctness checks passed. Its speed rows are measurements only
+(ordering is off in that campaign, and speeds are not compared across days).
+
+`compare-drain` was not used for the time-to-disk part: its preflight requires
+exactly zero pending bytes right after an explicit flush, and since plan 217 an
+ordered explicit flush waits only for the save points before it, so NTFS's own later
+writes (8 KiB here) can still be pending. `flush-order-cost` measures the same thing
+for ordering off and on.
 
 <a id="c-ordering-cost-observer-32"></a>
 ### C: ordering cost observer (#32, October 29)

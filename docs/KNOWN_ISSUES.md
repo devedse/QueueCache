@@ -19,7 +19,7 @@ still to do. Open items link to their details.
 | Issue | Fixed | Build or status |
 |---|:-:|---|
 | [Fast mode without write ordering: a crash can damage the file system](#fast-mode-without-write-ordering-can-damage-the-file-system-in-a-crash) | ❌ | By design: write ordering stays off by default because programs that flush very often slow down. Qualified for NTFS data drives; the C: results are in the next row. See the fixed #13 row |
-| [Write ordering on C:](https://github.com/devedse/QueueCache/issues/32) | ❌ | Qualification tests done; all seven ordered C: cut kinds have passed; the scope decision is open. Bounded live correctness passed on 0.4.897.1 to 0.4.909.1. The cost comparison found that a TRIM waiting behind a large save-point backlog held C: for 262 s (fixed in plan 216, validated), then that an explicit cache flush behind the same backlog held every C: request for 386 s; plan 217 lets that flush wait without holding other requests (validated on 0.4.909.1). The fresh cost comparison then passed: normal use 1.3% slower, memory pressure no slower, longest pause 0.32 s. Power cuts with ordering on (0.4.910.1/0.4.912.1): 6 of 7 passed with NTFS clean and untouched files exact; the page-file growth cut was not made in five attempts, because Windows did not grow the page file while the slowed write-out was behind. Plans 219/220 (0.4.917.1) let page-file growth and its first writes proceed without holding C:; then the growth cut and the page-file cut passed and the cost comparison passed again (normal use and pressure no slower, longest pause 0.56 s). The same early-churn cut with ordering off damaged NTFS on C:. The release regression passed on 0.4.912.1 and 0.4.917.1. Earlier coverage failures are retained. The app offers it only with a matching V28 driver. |
+| [Write ordering on C:](https://github.com/devedse/QueueCache/issues/32) | ❌ | Qualification tests done; all seven ordered C: cut kinds have passed; the scope decision is open. Bounded live correctness passed on 0.4.897.1 to 0.4.909.1. The cost comparison found that a TRIM waiting behind a large save-point backlog held C: for 262 s (fixed in plan 216, validated), then that an explicit cache flush behind the same backlog held every C: request for 386 s; plan 217 lets that flush wait without holding other requests (validated on 0.4.909.1). The fresh cost comparison then passed: normal use 1.3% slower, memory pressure no slower, longest pause 0.32 s. Power cuts with ordering on (0.4.910.1/0.4.912.1): 6 of 7 passed with NTFS clean and untouched files exact; the page-file growth cut was not made in five attempts, because Windows did not grow the page file while the slowed write-out was behind. Plans 219/220 (0.4.917.1) let page-file growth and its first writes proceed without holding C:; then the growth cut and the page-file cut passed and the cost comparison passed again (normal use and pressure no slower, longest pause 0.56 s). The same early-churn cut with ordering off damaged NTFS on C:. Plans 221–224 let a copy and a shadow copy (restore points, backups, `chkdsk /scan`) go ahead without holding C: behind the backlog (before, a shadow copy failed after about 6 minutes with C: held); `chkdsk /f`, defragmentation and a restart still wait for it ([probes](#fast-mode-without-write-ordering-can-damage-the-file-system-in-a-crash)). The release regression passed on 0.4.912.1, 0.4.917.1 and the final build 0.4.923.1. The [final off-versus-on comparison](PERFORMANCE.md#c-ordering-final-32) found CrystalDiskMark writes 27% to 98% lower and flushed data taking 7× to 57× as long to reach the disk. Earlier coverage failures are retained. The app offers it only with a matching V28 driver. |
 | [High-watermark pressure check stopped the plan-189 release campaign](#high-watermark-pressure-check-stopped-the-plan-189-release-campaign) | ❌ | Not reproduced, [#30](https://github.com/devedse/QueueCache/issues/30): two standalone runs and the complete plan-192 release campaign (11/11 phases, 106/106 cases, restored) passed it with exact counters; the original cause is unproven |
 | [The driver and installer are test-signed](#the-driver-is-test-signed) | ❌ | Production signing not done |
 | [Raw disk reads and writes bypass the cache](#raw-disk-reads-and-writes-bypass-the-cache-by-design) | ❌ | By design |
@@ -298,7 +298,33 @@ After a flush-heavy burst that backlog takes minutes at one lower flush per save
 (300 to 700 per second in these windows). The cost windows record no such barrier after
 the burst, but they do not show it cannot happen. Since plan 219 a page-file write into
 a new range no longer holds other requests, but that write itself still waits for the
-backlog.
+backlog. Since plan 223 a shadow copy (restore points, backups, `chkdsk /scan`) also
+waits for it without holding other requests (below).
+
+**Windows operations with a backlog (2026-11-01, 0.4.920.1 and 0.4.922.1):** probes
+on the VM with ordering on, right after 1 to 3 minutes of new 4 KiB files each flushed
+(up to 2 GiB and 193,000 save points unwritten; the ordering-off arm of the same burst
+leaves nothing unwritten):
+
+| Operation | Before plan 223 (0.4.920.1) | Now (0.4.922.1) |
+|---|---|---|
+| Shadow copy of C: (what restore points and backups use) | Failed after 354 s ("unknown error"); C: held throughout | Created after 396 s; C: kept serving writes (longest pause 2.5 s, at the end) |
+| `chkdsk C: /scan` (takes a shadow copy) | Failed after 360 s: "the shadow copy provider timed out while flushing data" | No problems found after 413 s; longest pause 3.1 s |
+| Explorer or robocopy copy | Waited for the backlog before plan 221 | 0.4 s, nothing written out (copy offload refused) |
+| `chkdsk W: /f` (dismounts) | Waited 3.4 min for the write-out, then no problems in 7 s | Unchanged |
+| Optimize/defragment the lab VHDX | Allocation queries waited for the write-out (126,698 barriers); the fragmented file stayed intact | Unchanged |
+| Restart | Took 378 s instead of 62 s: Windows waited for the write-out | Unchanged |
+
+The snapshot failure: Windows' flush-and-hold request passes through the file system,
+which holds the volume until it completes, and the cache wrote out the whole backlog
+before passing it on. Plan 223 lets the snapshot's earlier preparation request, sent
+while nothing is held, wait on an offload thread until every earlier save is on the
+disk; flush-and-hold then finds only the writes made since. The snapshot still takes as
+long as the write-out, and a program that keeps writing flushed files during that wait
+grows a new backlog that flush-and-hold must write out while the volume is held.
+`chkdsk /f`, defragmentation and a restart remain full barriers by design: they need
+the disk to hold every earlier write. The defragmentation probe ran on a
+thin-provisioned VHDX, whose allocation Windows queries; a physical disk was not tested.
 
 **Page-file growth waited for the write-out (diagnosed 2026-10-31, fixed in plans
 219/220):** before Windows extends the page file, NTFS sends a volume request
@@ -381,16 +407,23 @@ checkpoint) ran on driver code before plans 219/220 and were not repeated.
   volumes (the separate C: cuts for #32 are described above). Ordering stays off
   by default (see Cost); the warning above applies
   whenever it is off.
-- **Cost:** with ordering on, writing into the cache takes the same time as with
-  it off (plan 196: a 1.5 GiB file, 25,600 flushed files and 25,600 write-through
-  pairs, all ranges overlapping). Each bookmark needs its own disk flush, so
-  reaching the disk took about 7× as long for the files and 54× for the pairs
+- **Cost:** with ordering on, writing new data into the cache takes the same time
+  as with it off (plan 196: a 1.5 GiB file, 25,600 flushed files and 25,600
+  write-through pairs, all ranges overlapping; the same on 0.4.923.1). Each bookmark
+  needs its own disk flush, so reaching the disk took about 7× as long for the files
+  and 54× for the pairs (57× on 0.4.923.1)
   ([single-mode result](PERFORMANCE.md#fast-ordering-13-single)). That matters
   only for nonstop flush-heavy writing: flushing every small file for five
   minutes filled the 2 GiB cache after about 1.5 minutes, after which the
-  application ran at about 230 files/s instead of about 2,000. Windows' `tar` and
+  application ran at about 230 files/s instead of about 2,000 (720–744 against
+  1,983–2,872 on 0.4.923.1). Windows' `tar` and
   `robocopy` on a 16,000-file tree showed no difference
-  ([sustained result](PERFORMANCE.md#fast-ordering-13-sustained)). Mode 2 had
+  ([sustained result](PERFORMANCE.md#fast-ordering-13-sustained)). Overwriting
+  data written before a file-system flush keeps the old version until it is on the
+  disk, so a benchmark that rewrites one file, such as CrystalDiskMark, fills the
+  cache with old versions and then waits for the ordered write-out: its writes were
+  27% to 98% lower, its reads unchanged
+  ([final comparison](PERFORMANCE.md#c-ordering-final-32)). Mode 2 had
   also slowed the application itself (2.5× and 43× in plan 194) because every
   write woke all drain threads, which searched the whole backlog under the cache
   lock ([cause and fix](PERFORMANCE.md#fast-ordering-13-fix)).
@@ -804,6 +837,27 @@ written, and everything else reads back exactly.
 Correctness checks and their evidence. Performance evidence is in [performance](PERFORMANCE.md).
 
 ### Correctness qualification
+
+**Issue #32, copies and shadow copies with a backlog (2026-11-01):** plans 221–225
+on 0.4.919.1 to 0.4.923.1. Plan 221 refuses copy offload on an enabled cache and plan
+223 lets a shadow copy's preparation wait off the request worker with ordering on.
+Under Verifier `0x209bb` the targeted campaign completed and restored 6/6 phases on
+0.4.920.1 (121/121 checks) and on 0.4.922.1 (28/28 ordering checks and the retained
+phases), including a real shadow copy created 4.1 s after its request with 40 save
+points still unwritten, every one of them in the shadow image, while a later write
+and read finished at once. The first run on 0.4.921.1 stopped because the new check
+overwrote a block that a later check expected (plan 224 moved it; the failure was in
+the test, not the driver). With Verifier off and ordering on, a shadow copy and
+`chkdsk /scan` after a 3-minute flushed-file burst succeeded after 396 and 413 s with
+C: still serving writes (longest pause 2.5 and 3.1 s); on 0.4.920.1 both had failed
+after about 6 minutes with C: held. Plan 225 lets the cost and sustained suites
+finish an ordered case once the checkpoint has passed its save point, as plan 217
+made it. `release-performance` on 0.4.923.1 completed and restored 11/11 phases and
+106/106 cases, with 94/94 retained checks; `verify-completion` accepted it. Loaded
+hashes were checked, every evidence export was independently hash-verified, and the
+original settings, apps and services were restored. The seven power-cut kinds were
+not repeated: plans 221–225 change copy offload, snapshot preparation and the runner,
+not the order in which writes reach the disk.
 
 **Issue #32, page-file fixes and their qualification (2026-10-31/11-01):** plans
 219/220 on 0.4.917.1. Under Verifier `0x209bb` the targeted campaign completed and
