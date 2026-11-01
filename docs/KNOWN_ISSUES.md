@@ -291,8 +291,9 @@ the two tested profiles. A crash during page-file growth has one passing cut
 
 **Remaining limit (ordering on):** other full barriers still hold every request
 until the whole backlog is on the disk: a media-changing control (including storage
-data-set requests other than TRIM and notifications), removal, shutdown, and a
-page-file write outside the learned safe ranges when all 32 learner slots are busy.
+data-set requests other than TRIM, notifications and copy offload, which an enabled
+cache refuses since plan 221), removal, shutdown, and a page-file write outside the
+learned safe ranges when all 32 learner slots are busy.
 After a flush-heavy burst that backlog takes minutes at one lower flush per save point
 (300 to 700 per second in these windows). The cost windows record no such barrier after
 the burst, but they do not show it cannot happen. Since plan 219 a page-file write into

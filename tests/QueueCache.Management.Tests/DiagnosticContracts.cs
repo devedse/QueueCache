@@ -36,7 +36,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 220, "plan 220 removes only the overlapping part of the safe page-file set");
+        Check(VerificationPlan.Version == 221, "plan 221 refuses copy offload on an enabled cache without a write-out");
         var progressOptions = new VerificationOptions("W:", PagingReadProgressScenario.Suite, BudgetMiB: 256);
         VerificationPlan.Validate(progressOptions);
         Check(VerificationPlan.Integrity(progressOptions).Single().Id == "paging-read-progress-v215" &&
@@ -544,11 +544,11 @@ internal static class DiagnosticContracts
             drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
         Reject(() => TelemetryCoverage.Validate(completeDrain.Where((_, i) => i is < 60 or > 63).ToArray(),
             drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
-        Check(VerificationPlan.Integrity(new("Q:", "flush-order")).SequenceEqual([new IntegrityCase("flush-order-v220", "flush-order")]) &&
+        Check(VerificationPlan.Integrity(new("Q:", "flush-order")).SequenceEqual([new IntegrityCase("flush-order-v221", "flush-order")]) &&
             VerificationPlan.InjectsLabFaults("flush-order"), "ordering suite runs only its owned checks and records deliberate fault recovery");
         var orderCampaign = VerificationCampaignPlan.Create(new(new("Q:", "quick", Repeats: 1), "experiment", "W:", FocusSuite: "flush-order", PauseBackingCache: true));
         Check(orderCampaign.Count == 1 && orderCampaign[0].Role == CampaignTargetRole.NtfsLab &&
-            orderCampaign[0].ExpectedCases.SequenceEqual(["flush-order-v220"]), "ordering experiment pauses the backing cache and targets only the disposable lab role");
+            orderCampaign[0].ExpectedCases.SequenceEqual(["flush-order-v221"]), "ordering experiment pauses the backing cache and targets only the disposable lab role");
         var orderRecovery = new RecoverySnapshot(1, new DiskTarget('Q', 99990, 8L << 30, "fixture"),
             new(0, 0, 8UL << 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), false, "[]", DateTimeOffset.UnixEpoch, "fixture", FlushOrderMode: 0);
         Check(VerificationWorker.RestorationMismatches(orderRecovery, orderRecovery.State, orderRecovery.State, "[]", 0,
@@ -636,6 +636,23 @@ internal static class DiagnosticContracts
             queryWaiting with { LabGate = queryDone.LabGate } })
             Reject(() => FlushOrderScenario.ValidateQueryDrained(prepareForwarded, wrong, queryDone, waiting: true));
         Reject(() => FlushOrderScenario.ValidateQueryDrained(prepareForwarded, queryWaiting, queryWaiting, waiting: true));
+        // Plan 221: copy offload is refused at once (ERROR_NOT_SUPPORTED) while the gate holds, with no barrier.
+        FlushOrderScenario.ValidateCopyOffloadRefused(prepareBefore, prepareBefore, .001, 50, 50);
+        // The 0.4.917.1 shape: the offload read drained (another barrier, recording its action) and returned only after the hold.
+        foreach (var wrong in new[] { prepareBefore with { OtherBarriers = prepareBefore.OtherBarriers + 1 },
+            prepareBefore with { LabGate = queryDone.LabGate }, prepareBefore with { FlushOrder = prepareBefore.FlushOrder! with { Mode = 0 } } })
+            Reject(() => FlushOrderScenario.ValidateCopyOffloadRefused(prepareBefore, wrong, .001, 50, 50));
+        foreach (var (seconds, read, write) in new[] { (double.NaN, 50, 50), (-1, 50, 50), (1.01, 50, 50), (.001, 0, 50), (.001, 50, 0), (.001, 1, 50) })
+            Reject(() => FlushOrderScenario.ValidateCopyOffloadRefused(prepareBefore, prepareBefore, seconds, read, write));
+        var offloadRead = FlushOrderScenario.DataSetRequest(0x80000003, 8192, 4096);
+        var offloadWrite = FlushOrderScenario.DataSetRequest(4, 8192, 4096);
+        Check(offloadRead.Length == 64 && BinaryPrimitives.ReadUInt32LittleEndian(offloadRead.AsSpan(4)) == 0x80000003 &&
+            BinaryPrimitives.ReadUInt32LittleEndian(offloadRead.AsSpan(12)) == 32 && BinaryPrimitives.ReadUInt32LittleEndian(offloadRead.AsSpan(16)) == 16 &&
+            BinaryPrimitives.ReadUInt32LittleEndian(offloadRead.AsSpan(20)) == 48 && BinaryPrimitives.ReadInt64LittleEndian(offloadRead.AsSpan(48)) == 8192 &&
+            offloadWrite.Length == 576 && BinaryPrimitives.ReadUInt32LittleEndian(offloadWrite.AsSpan(4)) == 4 &&
+            BinaryPrimitives.ReadUInt32LittleEndian(offloadWrite.AsSpan(16)) == 528 && BinaryPrimitives.ReadUInt32LittleEndian(offloadWrite.AsSpan(20)) == 560 &&
+            BinaryPrimitives.ReadUInt64LittleEndian(offloadWrite.AsSpan(568)) == 4096,
+            "Offload requests: read and write parameter blocks at 32, one 8-byte-aligned range after them");
         var notification = FlushOrderScenario.DataSetRequest(0x80000002, 8192, 4096);
         var allocation = FlushOrderScenario.DataSetRequest(0x80000005, 8192, 4096);
         Check(notification.Length == 80 && BinaryPrimitives.ReadUInt32LittleEndian(notification) == 28 &&

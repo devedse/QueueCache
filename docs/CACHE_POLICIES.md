@@ -82,6 +82,7 @@ other users); the lab VM was converted by hand.
 | TRIM | NTFS sends the data-set TRIM to the volume; pending writes in the range are dropped, clean copies released, issued writes awaited (`trim-cache`, on a VHDX because the VM's VirtIO disks cannot TRIM, KNOWN_ISSUES). |
 | BitLocker | The cache is above `fvevol`, so it holds plaintext, as the Windows file cache does; the disk still receives encrypted data. |
 | Volume-handle I/O (`\\.\X:`), chkdsk, format | Goes through the cache like file-system I/O, so it is coherent. |
+| Copy offload (ODX: Explorer, robocopy, Hyper-V) | Refused while the cache is enabled (since plan 221), so the copy falls back to a normal copy through the cache. The offload read asks the disk for a token of the data it holds, so forwarding it meant writing out every unwritten byte first and dropping the read cache; every copy job tries it once, and most disks refuse it anyway (`flush-order/copy-offload-refused`). |
 | Crash dumps, hibernation | Written through the dump stack below every filter, as before. Pending Fast data is lost on a crash, as before. |
 | File systems | Any file system Windows mounts: NTFS, ReFS (Dev Drives), FAT32, exFAT. FAT32/exFAT have no journal: the CLI and desktop warn that a crash with Fast-mode data in RAM can damage the file system itself. Unformatted volumes pass through; a cache left on one by raw developer tests can be flushed and removed. |
 | Volumes without a letter, spanned/striped volumes | The filter passes through; the tools cannot select them (a letter and one disk extent are required). |

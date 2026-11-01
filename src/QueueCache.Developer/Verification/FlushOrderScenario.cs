@@ -15,7 +15,7 @@ namespace QueueCache.Developer.Verification;
 public static class FlushOrderScenario
 {
     private const int Block = 4096, MiB = 1 << 20, Offset = 4 * MiB;
-    public const int CheckCount = 17 + PagingOrderScenario.CheckCount, WriteThroughCheckCount = 11;
+    public const int CheckCount = 18 + PagingOrderScenario.CheckCount, WriteThroughCheckCount = 11;
     public const ulong On = 1, WriteThrough = 2;
 
     /// <summary>Mode 1 runs every check, including the per-cache setting. Lab mode 2 (#31) runs the driver
@@ -301,6 +301,7 @@ public static class FlushOrderScenario
                 checks.Add(await CheckTrimWhileGroupHeld(target, device, path, evidence));
                 checks.Add(await CheckFlushLeavesRequestsMoving(target, device, path, evidence));
                 checks.Add(await CheckPreparationNotDrained(target, device, path, evidence));
+                checks.Add(await CheckCopyOffloadRefused(target, device, path, evidence));
                 Apply(target, device, mode);
                 device.Control(WriteCacheAction.LabTrimMode, value: 3);
                 using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
@@ -659,6 +660,17 @@ public static class FlushOrderScenario
             throw new InvalidDataException("A data-set allocation query did not wait for the held group behind a recorded barrier.");
     }
 
+    /// <summary>Plan 221: with an earlier group held at the gate and another block unwritten, a copy-offload read and
+    /// write were refused (ERROR_NOT_SUPPORTED) within a second without any barrier. Before plan 221 each wrote out
+    /// every unwritten byte first and only then reached the disk.</summary>
+    public static void ValidateCopyOffloadRefused(CacheDiagnostics before, CacheDiagnostics after, double seconds, int readError, int writeError)
+    {
+        if (!double.IsFinite(seconds) || seconds < 0 || seconds > 1 || readError != NotSupported || writeError != NotSupported ||
+            after.LabGate is not { State: 2, OldLowerDoneSeq: > 0, OldRetireSeq: 0 } ||
+            after.OtherBarriers != before.OtherBarriers || after.FlushOrder?.Mode != On)
+            throw new InvalidDataException("A copy-offload request was not refused at once, without a barrier, while a group was held.");
+    }
+
     // Plan 217 (R9: an explicit flush behind a 190,000-group backlog held the request worker, so every later C:
     // request waited 386 s). Eager drain starts the sealed group's lower write at once and the gate holds its
     // completion; the explicit flush must wait for that group off the worker, so a later write and read of another
@@ -824,26 +836,96 @@ public static class FlushOrderScenario
             $"With an earlier group held and another block unwritten, Windows' page-file preparation (Win32 result {prepareError}) and a page-file data-set notification (result {notificationError}) completed in {seconds:F3}s without a barrier. A data-set allocation query (result {queryError}) still waited for the held group behind a barrier that recorded its action. The held write, the unwritten block and an untouched neighbor matched after release.");
     }
 
-    // Raw volume controls for plan 219. The lower stack may refuse these requests (the result is recorded); the cache's
-    // classification, which this check proves, happens before they are forwarded.
+    // Plan 221 (#32, cost window R11): every Explorer or robocopy copy job tries copy offload (ODX) once, and its offload
+    // read wrote out every unwritten byte first, so the copy and the whole volume waited for the backlog. An enabled cache
+    // refuses offload reads and writes at once (callers then copy normally, through the cache); the gate holds an earlier
+    // group, so any barrier would block until it is released.
+    private static async Task<CheckResult> CheckCopyOffloadRefused(DiskTarget target, CacheDevice device, string path, string evidence)
+    {
+        const long unwrittenOffset = Offset + 3 * Block;
+        Reset(device);
+        device.Control(WriteCacheAction.FlushOrder, value: On);
+        ConfigurationManager.Apply(target, new CacheConfiguration(64, CachePreset.Fast)
+        {
+            Options = new CacheOptions(Drain: DrainAlgorithm.Eager, BatchKiB: 4, Parallelism: 2, RetainWrites: false)
+        }, true);
+        double seconds;
+        int readError, writeError;
+        using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
+        {
+            var diskOffset = PagingCoherenceScenarios.DiskOffsetOf(path, Offset, target.Root);
+            var unwrittenDisk = PagingCoherenceScenarios.DiskOffsetOf(path, unwrittenOffset, target.Root);
+            device.Control(WriteCacheAction.LabGate, (ulong)diskOffset, 3000UL << 32 | Block);
+            try
+            {
+                file.Write(Offset, Pattern(22));
+                file.Flush(); // Seals the held group from volatile RAM.
+                var waiting = System.Diagnostics.Stopwatch.StartNew();
+                while (device.GetDiagnostics().LabGate is not { State: 2, OldLowerDoneSeq: > 0 })
+                {
+                    if (waiting.Elapsed.TotalSeconds > 3)
+                        throw new IOException("The sealed group's lower write did not reach the gate hold.");
+                    await Task.Delay(10);
+                }
+                file.Write(unwrittenOffset, Pattern(23)); // Unwritten: the old path drained it before forwarding.
+                var before = device.GetDiagnostics();
+                using (var volume = OpenVolume(target))
+                {
+                    var clock = System.Diagnostics.Stopwatch.StartNew();
+                    readError = VolumeControl(volume, ManageDataSet, DataSetRequest(DsmOffloadRead, unwrittenDisk, Block), 1024);
+                    writeError = VolumeControl(volume, ManageDataSet, DataSetRequest(DsmOffloadWrite, unwrittenDisk, Block), 16);
+                    seconds = clock.Elapsed.TotalSeconds;
+                }
+                var after = device.GetDiagnostics();
+                RunStorage.AtomicJson(evidence + ".copy-offload.json", new
+                {
+                    Before = before, After = after, Seconds = seconds, ReadWin32Error = readError, WriteWin32Error = writeError
+                });
+                ValidateCopyOffloadRefused(before, after, seconds, readError, writeError);
+            }
+            finally
+            {
+                device.Control(WriteCacheAction.LabGate, value: 0);
+            }
+        }
+        Reset(device);
+        using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
+        {
+            AssertRead(file, Offset, Pattern(22));
+            AssertRead(file, unwrittenOffset, Pattern(23));
+            AssertRead(file, Offset + Block, Pattern(3));
+        }
+        return new("flush-order/copy-offload-refused", "PASS",
+            $"With an earlier group held and another block unwritten, a copy-offload read and write were refused (Win32 results {readError} and {writeError}) in {seconds:F3}s without a barrier. The held write, the unwritten block and an untouched neighbor matched after release.");
+    }
+
+    // Raw volume controls for plans 219 and 221. The lower stack may refuse these requests (the result is recorded); the
+    // cache's classification, which these checks prove, happens before they are forwarded.
     private const uint ManageDataSet = 0x002D9404, PreparePagingIo = 0x0056C04C;
-    private const uint DsmNotification = 0x80000002, DsmAllocation = 0x80000005;
+    private const uint DsmNotification = 0x80000002, DsmAllocation = 0x80000005, DsmOffloadRead = 0x80000003, DsmOffloadWrite = 4;
+    private const int NotSupported = 50; // ERROR_NOT_SUPPORTED, from STATUS_NOT_SUPPORTED
     private static readonly Guid PageFileType = new("0d0a64a1-38fc-4db8-9fe7-3f4352cd7c5c"); // FILE_TYPE_NOTIFICATION_GUID_PAGE_FILE
 
     /// <summary>DEVICE_MANAGE_DATA_SET_ATTRIBUTES with one volume range. A notification carries a
-    /// DEVICE_DSM_NOTIFICATION_PARAMETERS block that ends page-file usage of the range (a hint only).</summary>
+    /// DEVICE_DSM_NOTIFICATION_PARAMETERS block that ends page-file usage of the range (a hint only); an offload read
+    /// carries DEVICE_DSM_OFFLOAD_READ_PARAMETERS (the device's default token lifetime), and an offload write
+    /// DEVICE_DSM_OFFLOAD_WRITE_PARAMETERS with an empty token (both refused before a disk would parse them).</summary>
     public static byte[] DataSetRequest(uint action, long volumeOffset, int length)
     {
         var notification = action == DsmNotification;
-        var rangesOffset = notification ? 64 : 32;
+        var parameters = action switch { DsmNotification => 28, DsmOffloadRead => 16, DsmOffloadWrite => 16 + 512, _ => 0 };
+        var rangesOffset = parameters == 0 ? 32 : (32 + parameters + 7) & ~7;
         var input = new byte[rangesOffset + 16];
         var w = input.AsSpan();
         BinaryPrimitives.WriteUInt32LittleEndian(w, 28); // Size of the header
         BinaryPrimitives.WriteUInt32LittleEndian(w[4..], action);
-        if (notification)
+        if (parameters != 0)
         {
             BinaryPrimitives.WriteUInt32LittleEndian(w[12..], 32); // ParameterBlockOffset
-            BinaryPrimitives.WriteUInt32LittleEndian(w[16..], 28); // ParameterBlockLength
+            BinaryPrimitives.WriteUInt32LittleEndian(w[16..], (uint)parameters); // ParameterBlockLength
+        }
+        if (notification)
+        {
             BinaryPrimitives.WriteUInt32LittleEndian(w[32..], 28); // DEVICE_DSM_NOTIFICATION_PARAMETERS.Size
             BinaryPrimitives.WriteUInt32LittleEndian(w[36..], 2); // DEVICE_DSM_NOTIFY_FLAG_END
             BinaryPrimitives.WriteUInt32LittleEndian(w[40..], 1); // NumFileTypeIDs

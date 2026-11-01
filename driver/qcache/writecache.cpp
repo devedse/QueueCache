@@ -703,6 +703,19 @@ static ULONG DataSetAction(PIRP irp, PIO_STACK_LOCATION stack)
     const auto input = static_cast<const DEVICE_MANAGE_DATA_SET_ATTRIBUTES*>(irp->AssociatedIrp.SystemBuffer);
     return input->Size == sizeof(*input) ? static_cast<ULONG>(input->Action) : 0;
 }
+// Copy offload (ODX): an offload read asks the disk for a token of the data it holds now, and an offload write
+// fills ranges from such a token below the cache. Both had to write out every unwritten byte first (and the read
+// cache was dropped), so every Explorer or robocopy copy job, which tries offload once, waited for the whole
+// backlog and held the volume meanwhile (#32, cost window R11; most disks then refuse it anyway). Callers must
+// handle a refusal by copying normally, so an enabled cache refuses both and copies go through the cache. Plan 221.
+static_assert(DeviceDsmAction_OffloadRead == 0x80000003 && DeviceDsmAction_OffloadWrite == 4); // R11 recorded 0x80000003.
+static bool CopyOffload(PIRP irp, PIO_STACK_LOCATION stack)
+{
+    // With or without the non-destructive flag, which the header constants differ in.
+    const auto action = DataSetAction(irp, stack) & ~DeviceDsmActionFlag_NonDestructive;
+    return action == (DeviceDsmAction_OffloadRead & ~DeviceDsmActionFlag_NonDestructive) ||
+           action == (DeviceDsmAction_OffloadWrite & ~DeviceDsmActionFlag_NonDestructive);
+}
 // QueueCache's explicit flush and lab gate: neither frees nor reconfigures anything a page-file learner uses.
 static bool IgnoresPagingLearners(PIRP irp, PIO_STACK_LOCATION stack)
 {
@@ -715,8 +728,9 @@ static bool IgnoresPagingLearners(PIRP irp, PIO_STACK_LOCATION stack)
 }
 // QcMayChangeMedia for one request. A data-set notification only tells the device which ranges a file type
 // (page file, hibernation, dump) starts or stops using; it reads and changes no data (plan 219). Other
-// non-destructive data-set actions keep the drain: an offload read takes a token of the data on the disk
-// now, and an allocation query reports the disk's current state, so both must follow every earlier write.
+// non-destructive data-set actions keep the drain: an offload read reaching here (an enabled cache refuses it,
+// plan 221) takes a token of the data on the disk now, and an allocation query reports the disk's current
+// state, so both must follow every earlier write.
 static bool MediaChangingControl(PIRP irp, PIO_STACK_LOCATION stack)
 {
     return DataSetAction(irp, stack) != DeviceDsmAction_Notification &&
@@ -4790,6 +4804,14 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, bool* trans
         return status;
     }
     const bool control = major == IRP_MJ_DEVICE_CONTROL || major == IRP_MJ_INTERNAL_DEVICE_CONTROL;
+    if (control && CopyOffload(irp, stack))
+    {
+        AcquireCache(c);
+        const bool refuse = c->Enabled != FALSE;
+        ReleaseCache(c);
+        if (refuse)
+            return STATUS_NOT_SUPPORTED; // Before any offload wait or barrier (plan 221).
+    }
     if (major == IRP_MJ_FLUSH_BUFFERS || (control && (QcObservationRequest(stack) || !MediaChangingControl(irp, stack))))
         return Process(c, irp, deviceBytes);
     AcquireCache(c);
