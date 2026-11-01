@@ -25,6 +25,15 @@ public static class DurabilityCheckpointEvidence
         return true;
     }
 
+    /// <summary>The boundary a completed checkpoint reached: nothing pending, or with ordering on the frontier at the group
+    /// that was open when its flush started (plan 217). Measurements that wait for a checkpoint accept either; requiring
+    /// nothing pending failed every ordered case since plan 217, because NTFS keeps writing after the flush (12 KiB still
+    /// pending after the first flush-order-cost case on 0.4.922.1). Plan 225.</summary>
+    public static bool Durable(DurableCheckpointAttempt final) =>
+        final.After is { DirtyBytes: 0, InFlightBytes: 0 } ||
+        final.Before.UnsafeDefer && final.After.UnsafeDefer && final.DiagnosticsBefore.FlushOrder is { Mode: not 0 } a &&
+        final.DiagnosticsAfter.FlushOrder is { } b && b.Mode == a.Mode && b.DrainingEpoch >= a.CurrentEpoch;
+
     public static void Validate(DurabilityOracle oracle, DurabilityResult result)
     {
         DurabilityOracleContract.Validate(oracle);

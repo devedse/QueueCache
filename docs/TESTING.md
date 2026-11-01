@@ -209,7 +209,14 @@ snapshot must hold all 40 writes and the later one. The shadow copy is deleted. 
 (case `flush-order-v224`) moves those blocks 256 KiB past the others: on 0.4.921.1 the
 new check passed (preparation waiting with 40 groups unwritten, later write and read in
 0.0004 s, snapshot created 4.1 s after the request), but it had overwritten a block that
-the following TRIM step expects, which then failed its byte check.
+the following TRIM step expects, which then failed its byte check. Plan 225 (case IDs
+`flush-order-cost-v225-…`, `flush-order-sustained-v225-…` and their `-fua-` forms) fixes
+the ordered end check of both experiments: since plan 217 the durable checkpoint completes
+with ordering on once the frontier passes every group sealed before its flush, but both
+experiments still required nothing pending afterwards, so every ordered case failed when
+NTFS wrote again (12 KiB pending after the first ordered cost case on 0.4.922.1). They now
+accept the checkpoint's own boundary (`DurabilityCheckpointEvidence.Durable`); ordering off
+still needs a clean end.
 Plan 207 added eight paging-ordering checks to standalone `flush-order`. Plan 209 uses case `flush-order-v209`:
 seed boundary, stale layout token refusal, safe bypass while an older write is held, new-range learning,
 cached-write, disabled direct-write and TRIM invalidation, and zero safe overlaps. The explicit synthetic-paging
@@ -342,7 +349,7 @@ worker allows two hours.
 Plan 196 keeps one ordering mode: value 1 is the former lab mode 3, and modes 2
 and 3 are refused. `flush-order` (`flush-order-v196`) runs its thirteen checks
 once, named `flush-order/<check>`; a write-through must now end its group exactly
-once. `flush-order-cost` (`flush-order-cost-v196-r<repeat>-<workload>-off|on`)
+once. `flush-order-cost` (`flush-order-cost-v225-r<repeat>-<workload>-off|on`; v196 then v203 before plan 225)
 compares ordering off and on with the plan-195 workloads, alternating which arm
 runs first (18 cases for three repetitions).
 
@@ -356,7 +363,7 @@ that the tools do not flush. Every second it records the application's progress,
 unwritten bytes, waits for cache space, bookmarks and group flushes. Bytes are
 checked unbuffered after cache release: every tree file, and every 64th flushed
 file plus the last thousand. Case IDs are
-`flush-order-sustained-v197-r<repeat>-<workload>-off|on`; the worker allows
+`flush-order-sustained-v225-r<repeat>-<workload>-off|on` (v197 before plan 225); the worker allows
 three hours. The file runs create up to about 840,000 files, which grows the lab
 volume's NTFS file table by about 1 GiB for good. A failed run keeps its case
 folder for inspection; record and remove it before the next run, or the 6 GiB

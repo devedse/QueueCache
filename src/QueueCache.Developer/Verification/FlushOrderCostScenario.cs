@@ -120,7 +120,7 @@ public static class FlushOrderCostScenario
                 var durableSeconds = timer.Elapsed.TotalSeconds; var durableEnd = DateTimeOffset.UtcNow;
                 var after = checkpoint.Final.After; var diagAfter = checkpoint.Final.DiagnosticsAfter; var perfAfter = device.GetPerformance();
                 RunStorage.AtomicJson(evidence + "." + item.Id + ".checkpoint.json", checkpoint);
-                if (after.LastError != 0 || after.Errors != before.Errors || after.DirtyBytes != 0 || after.InFlightBytes != 0 ||
+                if (after.LastError != 0 || after.Errors != before.Errors || !DurabilityCheckpointEvidence.Durable(checkpoint.Final) ||
                     diagAfter.FlushOrder?.Mode != item.Mode || diagBefore.FlushOrder?.Mode != item.Mode)
                     throw new IOException("Ordering cost ended unhealthy, dirty or in the wrong mode.");
                 if (isWriteThrough && diagAfter.WriteThroughWrites < diagBefore.WriteThroughWrites + FlushOrderCostPlan.WriteThroughPairs)

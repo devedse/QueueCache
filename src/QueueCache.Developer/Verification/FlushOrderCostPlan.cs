@@ -16,7 +16,7 @@ public static class FlushOrderCostPlan
     public static IReadOnlyList<FlushOrderCostCase> Cases(int repeats, bool writeThroughArm = false)
     {
         if (repeats is < 1 or > 3) throw new ArgumentOutOfRangeException(nameof(repeats));
-        var prefix = writeThroughArm ? "flush-order-fua-cost-v203" : "flush-order-cost-v203";
+        var prefix = writeThroughArm ? "flush-order-fua-cost-v225" : "flush-order-cost-v225";
         return [.. Enumerable.Range(1, repeats).SelectMany(repeat =>
             new[] { "sequential-fit", "flush-heavy-files", "write-through-pairs" }.SelectMany(workload =>
                 (writeThroughArm ? WriteThroughOrders : Orders)[repeat - 1].Select(mode =>
